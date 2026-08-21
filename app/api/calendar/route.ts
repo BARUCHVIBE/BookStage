@@ -1,0 +1,62 @@
+import { env } from "cloudflare:workers";
+import { requireActiveMembership } from "@/app/lib/active-membership";
+import { conflictResponse, findBlockingConflict, requireArtistCalendarAccess } from "@/app/lib/calendar-access";
+import { isBlockingStatus, isCalendarStatus, normalizeCalendarInput } from "@/app/lib/calendar-rules";
+import { rejectCrossOriginMutation } from "@/app/lib/request-security";
+
+function monthRange(month: string | null) {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) return null;
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (monthNumber < 1 || monthNumber > 12) return null;
+  return {
+    start: new Date(Date.UTC(year, monthNumber - 1, 1)).toISOString(),
+    end: new Date(Date.UTC(year, monthNumber, 1)).toISOString(),
+  };
+}
+
+export async function GET(request: Request) {
+  const context = await requireActiveMembership();
+  if ("error" in context) return context.error;
+  const params = new URL(request.url).searchParams;
+  const range = monthRange(params.get("month"));
+  if (!range) return Response.json({ error: "Mês inválido." }, { status: 400 });
+  const artistId = params.get("artistId");
+  const status = params.get("status");
+  if (status && !isCalendarStatus(status)) return Response.json({ error: "Status inválido." }, { status: 400 });
+  const salesScope = context.membership.role === "SALES" ? `AND EXISTS (SELECT 1 FROM artist_sales_assignments assignment WHERE assignment.organization_id=entry.organization_id AND assignment.artist_id=entry.artist_id AND assignment.user_id=?)` : "";
+  const artistScope = artistId ? "AND entry.artist_id=?" : "";
+  const statusScope = status ? "AND entry.status=?" : "";
+  const bindings = [context.organizationId, range.end, range.start];
+  if (context.membership.role === "SALES") bindings.push(context.user.id);
+  if (artistId) bindings.push(artistId);
+  if (status) bindings.push(status);
+  const result = await env.DB.prepare(`SELECT entry.id,entry.artist_id AS artistId,artist.name AS artistName,entry.start_datetime AS startDatetime,entry.end_datetime AS endDatetime,entry.status,entry.title,entry.internal_notes AS internalNotes,entry.created_by AS createdBy,entry.created_at AS createdAt,entry.updated_at AS updatedAt,link.opportunity_id AS opportunityId FROM calendar_entries entry JOIN artists artist ON artist.id=entry.artist_id AND artist.organization_id=entry.organization_id LEFT JOIN opportunity_calendar_entries link ON link.calendar_entry_id=entry.id AND link.organization_id=entry.organization_id WHERE entry.organization_id=? AND entry.start_datetime<? AND COALESCE(entry.end_datetime,entry.start_datetime)>=? ${salesScope} ${artistScope} ${statusScope} ORDER BY entry.start_datetime,artist.name`).bind(...bindings).all();
+  const entries = context.membership.role === "FINANCE" ? result.results.map(row => ({ ...row, internalNotes: null, createdBy: null })) : result.results;
+  return Response.json({ entries, canCreate: context.membership.role !== "FINANCE" });
+}
+
+export async function POST(request: Request) {
+  const rejected = rejectCrossOriginMutation(request); if (rejected) return rejected;
+  const context = await requireActiveMembership();
+  if ("error" in context) return context.error;
+  let input;
+  try { input = normalizeCalendarInput(await request.json() as Record<string, unknown>); }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Dados inválidos." }, { status: 400 }); }
+  const access = await requireArtistCalendarAccess(context.organizationId, input.artistId, context.user.id, context.membership.role, true);
+  if ("error" in access) return access.error;
+  if (isBlockingStatus(input.status)) {
+    const conflict = await findBlockingConflict(context.organizationId, input.artistId, input.startDatetime, input.endDatetime);
+    if (conflict) return conflictResponse(conflict);
+  }
+  const id = crypto.randomUUID();
+  try {
+    await env.DB.prepare(`INSERT INTO calendar_entries (id,organization_id,artist_id,start_datetime,end_datetime,status,title,internal_notes,created_by) VALUES (?,?,?,?,?,?,?,?,?)`).bind(id, context.organizationId, input.artistId, input.startDatetime, input.endDatetime, input.status, input.title, input.internalNotes, context.user.id).run();
+  } catch (error) {
+    if (String(error).includes("CALENDAR_CONFLICT")) {
+      const conflict = await findBlockingConflict(context.organizationId, input.artistId, input.startDatetime, input.endDatetime);
+      if (conflict) return conflictResponse(conflict);
+    }
+    throw error;
+  }
+  return Response.json({ entry: { id, ...input, artistName: access.artist.name } }, { status: 201 });
+}

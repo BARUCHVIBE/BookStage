@@ -25,9 +25,11 @@ As credenciais podem ser substituídas pelas variáveis abaixo:
 ```env
 BOOKSTAGE_LOCAL_ADMIN_EMAIL=admin@bookstage.local
 BOOKSTAGE_LOCAL_ADMIN_PASSWORD=uma-senha-segura
+BOOKSTAGE_ENABLE_LOCAL_SEED=true
 ```
 
 Use `.env.example` como referência. Arquivos `.env` reais não devem ser versionados.
+O seed local só é executado quando `BOOKSTAGE_ENABLE_LOCAL_SEED=true` e nunca em produção.
 
 ## Autenticação
 
@@ -49,8 +51,27 @@ Principais tabelas:
 - `memberships`
 - `auth_credentials`
 - `sessions`
+- `artists`
+- `artist_sales_assignments`
+- `calendar_entries`
 
 As migrations ficam em `drizzle/`.
+
+## Equipe comercial dos artistas
+
+Cada artista pode ter um responsável comercial principal e múltiplos comerciais autorizados. As atribuições usam chaves estrangeiras compostas com `organization_id`, impedindo relacionamentos entre tenants também no banco. OWNER e MANAGER gerenciam atribuições; SALES visualiza somente artistas aos quais está atribuído.
+
+O helper `getArtistPrimaryCommercial` mantém preparada a consulta tenant-safe que poderá ser usada por oportunidades futuras, sem implementar CRM neste módulo.
+
+## Agenda central
+
+A agenda mensal atende a visão geral e a visão por artista, com filtros por artista e status. `CONFIRMED` e `BLOCKED` são protegidos contra sobreposição tanto na API quanto por triggers do SQLite. `AVAILABLE`, `INQUIRY` e `OPTION` podem coexistir; ausência de bloqueio também representa disponibilidade.
+
+## Catálogo público
+
+Cada organização ativa possui uma vitrine em `/catalogo/<slug-da-organizacao>`. Artistas ativos aparecem somente quando marcados como públicos e recebem uma página própria. As rotas públicas usam DTOs explícitos e a agenda é convertida apenas em `Disponível`, `Consultar disponibilidade` ou `Indisponível`, sem notas ou status operacionais.
+
+O CTA público cria ou reutiliza um `Customer` no tenant, registra uma `booking_request` com origem `PUBLIC_CATALOG` e atribui o responsável comercial principal do artista. A caixa interna `Solicitações` permite acompanhar essas entradas até a implementação do CRM.
 
 ## Validação
 
