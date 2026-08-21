@@ -49,6 +49,15 @@ async function migrateCommissions(db: D1Database) {
 }
 
 export function ensureDatabase() {
+  // Production databases are prepared by versioned D1 migrations during
+  // deployment. Running DDL in request handlers is unsafe because multiple
+  // Worker isolates can initialize concurrently and create the same objects.
+  if (
+    process.env.NODE_ENV === "production" ||
+    (env as unknown as Record<string, unknown>)
+      .BOOKSTAGE_SKIP_RUNTIME_BOOTSTRAP === "true"
+  )
+    return Promise.resolve();
   initialized ??= initialize();
   return initialized;
 }
