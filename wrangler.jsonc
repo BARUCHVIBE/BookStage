@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bookstage-staging",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bookstage-staging",
+      "database_id": "bab69395-cfaa-48f7-bf71-c79cd1ad3914",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "bookstage-staging-files"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

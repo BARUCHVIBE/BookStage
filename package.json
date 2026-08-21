@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:remote": "wrangler d1 migrations apply bookstage-staging --remote",
+    "deploy:cloudflare": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
