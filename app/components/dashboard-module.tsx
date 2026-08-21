@@ -1,36 +1,477 @@
 "use client";
 
-import { AlertTriangle, Ban, CalendarClock, CalendarDays, CircleDollarSign, Clock3, FileText, Handshake, ListChecks, MapPin, RefreshCw, Target, TicketCheck, UserPlus } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  CalendarClock,
+  CalendarDays,
+  CircleDollarSign,
+  Clock3,
+  FileText,
+  Handshake,
+  ListChecks,
+  MapPin,
+  RefreshCw,
+  Target,
+  TicketCheck,
+  UserPlus,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Item = Record<string, string | number | null>;
 type DashboardData = {
-  role: string; period: string; filters: { artists: Array<{ id: string; name: string }>; commercials: Array<{ id: string; name: string; role: string }>; selectedArtist: string | null; selectedCommercial: string | null };
-  visibility: { commercial: boolean; agenda: boolean; tasks: boolean; finance: boolean; commercialFilter: boolean };
-  commercial: null | { newLeads: number; openOpportunities: number; pipelineValue: number; openProposals: number; closedShows: number; stages: Array<{ stage: string; count: number }> };
+  role: string;
+  period: string;
+  filters: {
+    artists: Array<{ id: string; name: string }>;
+    commercials: Array<{ id: string; name: string; role: string }>;
+    selectedArtist: string | null;
+    selectedCommercial: string | null;
+  };
+  visibility: {
+    commercial: boolean;
+    agenda: boolean;
+    tasks: boolean;
+    finance: boolean;
+    commercialFilter: boolean;
+  };
+  commercial: null | {
+    newLeads: number;
+    openOpportunities: number;
+    pipelineValue: number;
+    openProposals: number;
+    closedShows: number;
+    stages: Array<{ stage: string; count: number }>;
+  };
   agenda: null | { upcomingShows: Item[]; options: Item[]; blocks: Item[] };
-  tasks: null | { stale: Item[]; overdueActions: Item[]; todayActions: Item[]; optionAttention: Item[] };
+  tasks: null | {
+    stale: Item[];
+    overdueActions: Item[];
+    todayActions: Item[];
+    optionAttention: Item[];
+  };
   finance: null | { overdue: Item[]; upcoming: Item[] };
 };
-const stageLabels: Record<string, string> = { NEW: "Novo", CONTACTED: "Contatado", QUALIFIED: "Qualificado", PROPOSAL: "Proposta", NEGOTIATION: "Negociação", DATE_OPTION: "Opção", CONTRACT: "Contrato", CLOSED_WON: "Ganho", CLOSED_LOST: "Perdido" };
-const money = (value: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(value / 100);
-const date = (value: unknown) => typeof value === "string" ? new Date(value.length === 10 ? `${value}T12:00:00` : value.replace(" ", "T") + (value.includes("Z") ? "" : "Z")).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) : "—";
-async function fetchDashboard(query: string) { const response = await fetch(`/api/dashboard?${query}`), data = await response.json() as DashboardData & { error?: string }; return { response, data }; }
-
-export function DashboardModule({ userName, organizationName }: { userName: string; organizationName: string }) {
-  const [period, setPeriod] = useState("30"), [artist, setArtist] = useState(""), [commercial, setCommercial] = useState(""), [data, setData] = useState<DashboardData | null>(null), [message, setMessage] = useState("");
-  const query = useMemo(() => new URLSearchParams({ period, ...(artist ? { artist } : {}), ...(commercial ? { commercial } : {}) }).toString(), [period, artist, commercial]);
-  const load = useCallback(async () => { const result = await fetchDashboard(query); if (result.response.ok) { setData(result.data); setMessage(""); } else setMessage(result.data.error || "Não foi possível carregar o dashboard."); }, [query]);
-  useEffect(() => { let mounted = true; fetchDashboard(query).then(result => { if (!mounted) return; if (result.response.ok) { setData(result.data); setMessage(""); } else setMessage(result.data.error || "Não foi possível carregar o dashboard."); }); return () => { mounted = false; }; }, [query]);
-  return <section className="operational-dashboard"><div className="page-heading dashboard-heading"><div><p className="eyebrow">Visão geral · {organizationName}</p><h1>Olá, {userName.split(" ")[0]}.</h1><p>{data?.role === "PRODUCTION" ? "Prioridades da agenda e da operação." : data?.role === "FINANCE" ? "Recebimentos que exigem acompanhamento." : "Decisões comerciais, agenda e tarefas em um só lugar."}</p></div><button className="button button-secondary" onClick={load}><RefreshCw />Atualizar</button></div><div className="dashboard-filters"><label>Período<select value={period} onChange={event => setPeriod(event.target.value)}><option value="30">30 dias</option><option value="90">90 dias</option><option value="year">Ano atual</option><option value="all">Todo o histórico</option></select></label><label>Artista<select value={artist} onChange={event => setArtist(event.target.value)}><option value="">Todos os artistas</option>{data?.filters.artists.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{data?.visibility.commercialFilter && <label>Comercial<select value={commercial} onChange={event => setCommercial(event.target.value)}><option value="">Toda a equipe</option>{data.filters.commercials.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</div>{message && <div className="calendar-alert">{message}</div>}{!data ? <div className="dashboard-loading">Carregando prioridades…</div> : <>
-    {data.commercial && <><div className="dashboard-metrics"><Metric icon={<UserPlus />} label="Novos leads" value={String(data.commercial.newLeads)} /><Metric icon={<Handshake />} label="Oportunidades abertas" value={String(data.commercial.openOpportunities)} /><Metric icon={<CircleDollarSign />} label="Valor do pipeline" value={money(data.commercial.pipelineValue)} /><Metric icon={<FileText />} label="Propostas em aberto" value={String(data.commercial.openProposals)} /><Metric icon={<TicketCheck />} label="Shows fechados" value={String(data.commercial.closedShows)} /></div><section className="dashboard-panel stage-panel"><PanelTitle eyebrow="Pipeline" title="Oportunidades por estágio" icon={<Target />} /><div className="stage-distribution">{data.commercial.stages.map(item => { const max = Math.max(...data.commercial!.stages.map(stage => stage.count), 1); return <div key={item.stage}><span>{stageLabels[item.stage] || item.stage}</span><i><b style={{ width: `${item.count / max * 100}%` }} /></i><strong>{item.count}</strong></div>; })}{!data.commercial.stages.length && <Empty text="Nenhuma oportunidade no período." />}</div></section></>}
-    <div className="dashboard-grid">{data.agenda && <section className="dashboard-panel"><PanelTitle eyebrow="Agenda" title="Próximos shows" icon={<CalendarDays />} /><DecisionList items={data.agenda.upcomingShows} empty="Nenhum show próximo." render={item => <><div><b>{String(item.title)}</b><small>{String(item.artistName)} · {String(item.city)}/{String(item.state)}</small></div><span>{date(item.date)}{item.time ? ` · ${item.time}` : ""}</span></>} /></section>}{data.agenda && <section className="dashboard-panel"><PanelTitle eyebrow="Agenda" title="Opções e bloqueios" icon={<Ban />} /><DecisionList items={[...data.agenda.options.map(item => ({ ...item, kind: "Opção" })), ...data.agenda.blocks.map(item => ({ ...item, kind: "Bloqueio" }))]} empty="Nenhuma opção ou bloqueio relevante." render={item => <><div><b>{String(item.title)}</b><small>{String(item.artistName)} · {String(item.kind)}</small></div><span>{date(item.startDatetime)}</span></>} /></section>}
-      {data.tasks && <section className="dashboard-panel"><PanelTitle eyebrow="Ações" title="Tarefas que pedem atenção" icon={<ListChecks />} /><AlertGroup icon={<AlertTriangle />} label="Ações vencidas" items={data.tasks.overdueActions} detail={item => `${item.customerName} · ${item.nextAction}`} /><AlertGroup icon={<Clock3 />} label="Ações de hoje" items={data.tasks.todayActions} detail={item => `${item.customerName} · ${item.nextAction}`} /><AlertGroup icon={<RefreshCw />} label="Sem interação há 7 dias" items={data.tasks.stale} detail={item => `${item.customerName} · ${item.artistName}`} /><AlertGroup icon={<CalendarClock />} label="Opções em até 14 dias" items={data.tasks.optionAttention} detail={item => `${item.title} · ${date(item.startDatetime)}`} /></section>}
-      {data.finance && <section className="dashboard-panel finance-alert-panel"><PanelTitle eyebrow="Financeiro" title="Recebimentos" icon={<CircleDollarSign />} /><AlertGroup icon={<AlertTriangle />} label="Pagamentos vencidos" items={data.finance.overdue} detail={item => `${item.showName} · ${money(Number(item.amount))} · ${date(item.dueDate)}`} /><AlertGroup icon={<CalendarClock />} label="Próximos 7 dias" items={data.finance.upcoming} detail={item => `${item.showName} · ${money(Number(item.amount))} · ${date(item.dueDate)}`} /></section>}
-    </div></>}</section>;
+const stageLabels: Record<string, string> = {
+  NEW: "Novo",
+  CONTACTED: "Contatado",
+  QUALIFIED: "Qualificado",
+  PROPOSAL: "Proposta",
+  NEGOTIATION: "Negociação",
+  DATE_OPTION: "Opção",
+  CONTRACT: "Contrato",
+  CLOSED_WON: "Ganho",
+  CLOSED_LOST: "Perdido",
+};
+const money = (value: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0,
+  }).format(value / 100);
+const date = (value: unknown) =>
+  typeof value === "string"
+    ? new Date(
+        value.length === 10
+          ? `${value}T12:00:00`
+          : value.replace(" ", "T") + (value.includes("Z") ? "" : "Z"),
+      ).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+    : "—";
+async function fetchDashboard(query: string) {
+  const response = await fetch(`/api/dashboard?${query}`),
+    data = (await response.json()) as DashboardData & { error?: string };
+  return { response, data };
 }
-function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) { return <article className="dashboard-metric"><span>{icon}</span><div><small>{label}</small><strong>{value}</strong></div></article>; }
-function PanelTitle({ eyebrow, title, icon }: { eyebrow: string; title: string; icon: React.ReactNode }) { return <header className="dashboard-panel-title"><div>{icon}<div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div></div></header>; }
-function DecisionList({ items, empty, render }: { items: Item[]; empty: string; render: (item: Item) => React.ReactNode }) { return <div className="decision-list">{items.map((item, index) => <article key={String(item.id || index)}>{render(item)}</article>)}{!items.length && <Empty text={empty} />}</div>; }
-function AlertGroup({ icon, label, items, detail }: { icon: React.ReactNode; label: string; items: Item[]; detail: (item: Item) => string }) { if (!items.length) return null; return <div className="alert-group"><header>{icon}<b>{label}</b><span>{items.length}</span></header>{items.map((item, index) => <p key={String(item.id || index)}>{detail(item)}</p>)}</div>; }
-function Empty({ text }: { text: string }) { return <p className="dashboard-empty"><MapPin />{text}</p>; }
+
+export function DashboardModule({
+  userName,
+  organizationName,
+}: {
+  userName: string;
+  organizationName: string;
+}) {
+  const [period, setPeriod] = useState("30"),
+    [artist, setArtist] = useState(""),
+    [commercial, setCommercial] = useState(""),
+    [data, setData] = useState<DashboardData | null>(null),
+    [message, setMessage] = useState("");
+  const query = useMemo(
+    () =>
+      new URLSearchParams({
+        period,
+        ...(artist ? { artist } : {}),
+        ...(commercial ? { commercial } : {}),
+      }).toString(),
+    [period, artist, commercial],
+  );
+  const load = useCallback(async () => {
+    const result = await fetchDashboard(query);
+    if (result.response.ok) {
+      setData(result.data);
+      setMessage("");
+    } else
+      setMessage(result.data.error || "Não foi possível carregar o dashboard.");
+  }, [query]);
+  useEffect(() => {
+    let mounted = true;
+    fetchDashboard(query).then((result) => {
+      if (!mounted) return;
+      if (result.response.ok) {
+        setData(result.data);
+        setMessage("");
+      } else
+        setMessage(
+          result.data.error || "Não foi possível carregar o dashboard.",
+        );
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [query]);
+  return (
+    <section className="operational-dashboard">
+      <div className="page-heading dashboard-heading">
+        <div>
+          <p className="eyebrow">Visão geral · {organizationName}</p>
+          <h1>Olá, {userName.split(" ")[0]}.</h1>
+          <p>
+            {data?.role === "PRODUCTION"
+              ? "Prioridades da agenda e da operação."
+              : data?.role === "FINANCE"
+                ? "Recebimentos que exigem acompanhamento."
+                : "Decisões comerciais, agenda e tarefas em um só lugar."}
+          </p>
+        </div>
+        <button className="button button-secondary" onClick={load}>
+          <RefreshCw />
+          Atualizar
+        </button>
+      </div>
+      <div className="dashboard-filters">
+        <label>
+          Período
+          <select
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+          >
+            <option value="30">30 dias</option>
+            <option value="90">90 dias</option>
+            <option value="year">Ano atual</option>
+            <option value="all">Todo o histórico</option>
+          </select>
+        </label>
+        <label>
+          Artista
+          <select
+            value={artist}
+            onChange={(event) => setArtist(event.target.value)}
+          >
+            <option value="">Todos os artistas</option>
+            {data?.filters.artists.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {data?.visibility.commercialFilter && (
+          <label>
+            Comercial
+            <select
+              value={commercial}
+              onChange={(event) => setCommercial(event.target.value)}
+            >
+              <option value="">Toda a equipe</option>
+              {data.filters.commercials.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      {message && <div className="calendar-alert">{message}</div>}
+      {!data ? (
+        <div className="dashboard-loading">Carregando prioridades…</div>
+      ) : (
+        <>
+          {data.commercial && (
+            <>
+              <div className="dashboard-metrics">
+                <Metric
+                  icon={<UserPlus />}
+                  label="Novos leads"
+                  value={String(data.commercial.newLeads)}
+                />
+                <Metric
+                  icon={<Handshake />}
+                  label="Oportunidades abertas"
+                  value={String(data.commercial.openOpportunities)}
+                />
+                <Metric
+                  icon={<CircleDollarSign />}
+                  label="Valor do pipeline"
+                  value={money(data.commercial.pipelineValue)}
+                />
+                <Metric
+                  icon={<FileText />}
+                  label="Propostas em aberto"
+                  value={String(data.commercial.openProposals)}
+                />
+                <Metric
+                  icon={<TicketCheck />}
+                  label="Shows fechados"
+                  value={String(data.commercial.closedShows)}
+                />
+              </div>
+              <section className="dashboard-panel stage-panel">
+                <PanelTitle
+                  eyebrow="Pipeline"
+                  title="Oportunidades por estágio"
+                  icon={<Target />}
+                />
+                <div className="stage-distribution">
+                  {data.commercial.stages.map((item) => {
+                    const max = Math.max(
+                      ...data.commercial!.stages.map((stage) => stage.count),
+                      1,
+                    );
+                    return (
+                      <div key={item.stage}>
+                        <span>{stageLabels[item.stage] || item.stage}</span>
+                        <i>
+                          <b
+                            style={{ width: `${(item.count / max) * 100}%` }}
+                          />
+                        </i>
+                        <strong>{item.count}</strong>
+                      </div>
+                    );
+                  })}
+                  {!data.commercial.stages.length && (
+                    <Empty text="Nenhuma oportunidade no período." />
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+          <div className="dashboard-grid">
+            {data.agenda && (
+              <section className="dashboard-panel">
+                <PanelTitle
+                  eyebrow="Agenda"
+                  title="Próximos shows"
+                  icon={<CalendarDays />}
+                />
+                <DecisionList
+                  items={data.agenda.upcomingShows}
+                  empty="Nenhum show próximo."
+                  render={(item) => (
+                    <>
+                      <div>
+                        <b>{String(item.title)}</b>
+                        <small>
+                          {String(item.artistName)} · {String(item.city)}/
+                          {String(item.state)}
+                        </small>
+                      </div>
+                      <span>
+                        {date(item.date)}
+                        {item.time ? ` · ${item.time}` : ""}
+                      </span>
+                    </>
+                  )}
+                />
+              </section>
+            )}
+            {data.agenda && (
+              <section className="dashboard-panel">
+                <PanelTitle
+                  eyebrow="Agenda"
+                  title="Opções e bloqueios"
+                  icon={<Ban />}
+                />
+                <DecisionList
+                  items={[
+                    ...data.agenda.options.map((item) => ({
+                      ...item,
+                      kind: "Opção",
+                    })),
+                    ...data.agenda.blocks.map((item) => ({
+                      ...item,
+                      kind: "Bloqueio",
+                    })),
+                  ]}
+                  empty="Nenhuma opção ou bloqueio relevante."
+                  render={(item) => (
+                    <>
+                      <div>
+                        <b>{String(item.title)}</b>
+                        <small>
+                          {String(item.artistName)} · {String(item.kind)}
+                        </small>
+                      </div>
+                      <span>{date(item.startDatetime)}</span>
+                    </>
+                  )}
+                />
+              </section>
+            )}
+            {data.tasks && (
+              <section className="dashboard-panel">
+                <PanelTitle
+                  eyebrow="Ações"
+                  title="Tarefas que pedem atenção"
+                  icon={<ListChecks />}
+                />
+                <AlertGroup
+                  icon={<AlertTriangle />}
+                  label="Ações vencidas"
+                  items={data.tasks.overdueActions}
+                  detail={(item) => `${item.customerName} · ${item.nextAction}`}
+                />
+                <AlertGroup
+                  icon={<Clock3 />}
+                  label="Ações de hoje"
+                  items={data.tasks.todayActions}
+                  detail={(item) => `${item.customerName} · ${item.nextAction}`}
+                />
+                <AlertGroup
+                  icon={<RefreshCw />}
+                  label="Sem interação há 7 dias"
+                  items={data.tasks.stale}
+                  detail={(item) => `${item.customerName} · ${item.artistName}`}
+                />
+                <AlertGroup
+                  icon={<CalendarClock />}
+                  label="Opções em até 14 dias"
+                  items={data.tasks.optionAttention}
+                  detail={(item) =>
+                    `${item.title} · ${date(item.startDatetime)}`
+                  }
+                />
+              </section>
+            )}
+            {data.finance && (
+              <section className="dashboard-panel finance-alert-panel">
+                <PanelTitle
+                  eyebrow="Financeiro"
+                  title="Recebimentos"
+                  icon={<CircleDollarSign />}
+                />
+                <AlertGroup
+                  icon={<AlertTriangle />}
+                  label="Pagamentos vencidos"
+                  items={data.finance.overdue}
+                  detail={(item) =>
+                    `${item.showName} · ${money(Number(item.amount))} · ${date(item.dueDate)}`
+                  }
+                />
+                <AlertGroup
+                  icon={<CalendarClock />}
+                  label="Próximos 7 dias"
+                  items={data.finance.upcoming}
+                  detail={(item) =>
+                    `${item.showName} · ${money(Number(item.amount))} · ${date(item.dueDate)}`
+                  }
+                />
+              </section>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+function Metric({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <article className="dashboard-metric">
+      <span>{icon}</span>
+      <div>
+        <small>{label}</small>
+        <strong>{value}</strong>
+      </div>
+    </article>
+  );
+}
+function PanelTitle({
+  eyebrow,
+  title,
+  icon,
+}: {
+  eyebrow: string;
+  title: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <header className="dashboard-panel-title">
+      <div>
+        {icon}
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+        </div>
+      </div>
+    </header>
+  );
+}
+function DecisionList({
+  items,
+  empty,
+  render,
+}: {
+  items: Item[];
+  empty: string;
+  render: (item: Item) => React.ReactNode;
+}) {
+  return (
+    <div className="decision-list">
+      {items.map((item, index) => (
+        <article key={String(item.id || index)}>{render(item)}</article>
+      ))}
+      {!items.length && <Empty text={empty} />}
+    </div>
+  );
+}
+function AlertGroup({
+  icon,
+  label,
+  items,
+  detail,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  items: Item[];
+  detail: (item: Item) => string;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="alert-group">
+      <header>
+        {icon}
+        <b>{label}</b>
+        <span>{items.length}</span>
+      </header>
+      {items.map((item, index) => (
+        <p key={String(item.id || index)}>{detail(item)}</p>
+      ))}
+    </div>
+  );
+}
+function Empty({ text }: { text: string }) {
+  return (
+    <p className="dashboard-empty">
+      <MapPin />
+      {text}
+    </p>
+  );
+}

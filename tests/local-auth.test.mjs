@@ -13,7 +13,10 @@ test("login do ChatGPT foi removido da aplicação", async () => {
 });
 
 test("sessões locais usam cookie HttpOnly e token armazenado como hash", async () => {
-  const auth = await readFile(new URL("../app/lib/local-auth.ts", import.meta.url), "utf8");
+  const auth = await readFile(
+    new URL("../app/lib/local-auth.ts", import.meta.url),
+    "utf8",
+  );
   assert.match(auth, /httpOnly:\s*true/);
   assert.match(auth, /sameSite:\s*"strict"/);
   assert.match(auth, /SHA-256/);

@@ -1,6 +1,25 @@
 "use client";
 
-import { ArrowLeft, Building2, CalendarCheck2, CalendarDays, ChevronDown, CircleDollarSign, FileText, Handshake, LayoutDashboard, LogOut, Menu, Music2, Plus, Save, ShieldCheck, Sparkles, Users, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Building2,
+  CalendarCheck2,
+  CalendarDays,
+  ChevronDown,
+  CircleDollarSign,
+  FileText,
+  Handshake,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Music2,
+  Plus,
+  Save,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarModule } from "@/app/components/calendar-module";
 import { CatalogManager } from "@/app/components/catalog-manager";
@@ -8,50 +27,940 @@ import { CrmModule } from "@/app/components/crm-module";
 import { ContractsModule } from "@/app/components/contracts-module";
 import { ShowsModule } from "@/app/components/shows-module";
 import { DashboardModule } from "@/app/components/dashboard-module";
+import { TeamModule } from "@/app/components/team-module";
 
-type Org={id:string;name:string;slug:string;email:string;phone?:string;document?:string;website?:string;instagram?:string;logo?:string;description?:string;role:string};
-type Member={id:string;name:string;email:string;role:string;status:string};
-type Artist={id:string;name:string;status:string;primaryUserId?:string|null;primaryUserName?:string|null;authorizedCount:number};
-type PublicArtistFields={id:string;name:string;slug?:string|null;status:string;photoUrl?:string|null;coverUrl?:string|null;genre?:string|null;description?:string|null;baseCity?:string|null;showFormats?:string|null;videoUrls?:string|null;instagram?:string|null;spotify?:string|null;youtube?:string|null;publicMaterials?:string|null;isPublic?:number|boolean};
-type ArtistDetail={artist:PublicArtistFields;assignments:Array<Member&{isPrimary:number}>;canManageAssignments:boolean};
-type Screen="dashboard"|"artists"|"agenda"|"catalog"|"crm"|"contracts"|"shows";
-const blank={name:"",email:"",phone:"",document:"",website:"",instagram:"",logo:"",description:""};
-const futureModules=[["Financeiro",CircleDollarSign]] as const;
-function Brand(){return <div className="brand"><span className="brand-mark">B<span/></span><b>BookStage</b></div>}
-
-export function BookStageApp({user}:{user:{id:string;email:string;name:string}}){
-  const [organizations,setOrganizations]=useState<Org[]>([]),[active,setActive]=useState<Org|null>(null),[members,setMembers]=useState<Member[]>([]),[artists,setArtists]=useState<Artist[]>([]);
-  const [screen,setScreen]=useState<Screen>("dashboard"),[selectedArtist,setSelectedArtist]=useState<ArtistDetail|null>(null),[responsibleFilter,setResponsibleFilter]=useState(""),[newArtistName,setNewArtistName]=useState(""),[agendaArtistId,setAgendaArtistId]=useState("");
-  const [primaryUserId,setPrimaryUserId]=useState(""),[authorizedUserIds,setAuthorizedUserIds]=useState<string[]>([]),[canManageAssignments,setCanManageAssignments]=useState(false),[artistNotice,setArtistNotice]=useState("");
-  const [editing,setEditing]=useState(false),[formOpen,setFormOpen]=useState(false),[menuOpen,setMenuOpen]=useState(false),[form,setForm]=useState(blank),[loading,setLoading]=useState(true),[notice,setNotice]=useState("");
-  const loadOrganizations=useCallback(async()=>{const r=await fetch("/api/organizations"),d=await r.json() as {organizations?:Org[]};setOrganizations(d.organizations||[]);setLoading(false)},[]);
-  const loadArtists=useCallback(async(filter="")=>{const suffix=filter?`?responsibleId=${encodeURIComponent(filter)}`:"",r=await fetch(`/api/artists${suffix}`),d=await r.json() as {artists?:Artist[];canManageAssignments?:boolean};if(r.ok){setArtists(d.artists||[]);setCanManageAssignments(Boolean(d.canManageAssignments))}},[]);
-  useEffect(()=>{fetch("/api/organizations").then(r=>r.json() as Promise<{organizations?:Org[]}>).then(d=>{setOrganizations(d.organizations||[]);setLoading(false)})},[]);
-  useEffect(()=>{if(active){fetch(`/api/organizations/${active.id}/members`).then(r=>r.json() as Promise<{members?:Member[]}>).then(d=>setMembers(d.members||[]));const suffix=responsibleFilter?`?responsibleId=${encodeURIComponent(responsibleFilter)}`:"";fetch(`/api/artists${suffix}`).then(r=>r.json() as Promise<{artists?:Artist[];canManageAssignments?:boolean}>).then(d=>{setArtists(d.artists||[]);setCanManageAssignments(Boolean(d.canManageAssignments))})}},[active,responsibleFilter]);
-  async function saveOrganization(e:React.FormEvent){e.preventDefault();const url=editing&&active?`/api/organizations/${active.id}`:"/api/organizations",r=await fetch(url,{method:editing?"PATCH":"POST",headers:{"content-type":"application/json"},body:JSON.stringify(form)}),d=await r.json() as {error?:string;organization?:Org};if(!r.ok){setNotice(d.error||"Não foi possível salvar.");return}setNotice(editing?"Organização atualizada.":"Organização criada.");setEditing(false);setFormOpen(false);setForm(blank);await loadOrganizations();if(d.organization)await chooseOrganization(d.organization)}
-  async function chooseOrganization(org:Org){const r=await fetch("/api/active-organization",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({organizationId:org.id})});if(r.ok){setActive(org);setScreen("dashboard");setSelectedArtist(null);setAgendaArtistId("");setNotice("");setResponsibleFilter("")}}
-  function editOrganization(){if(!active)return;setForm({name:active.name,email:active.email,phone:active.phone||"",document:active.document||"",website:active.website||"",instagram:active.instagram||"",logo:active.logo||"",description:active.description||""});setEditing(true);setFormOpen(true)}
-  async function logout(){await fetch("/api/auth/logout",{method:"POST"});location.reload()}
-  async function createArtist(e:React.FormEvent){e.preventDefault();const r=await fetch("/api/artists",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:newArtistName})}),d=await r.json() as {error?:string;artist?:Artist};if(!r.ok){setArtistNotice(d.error||"Não foi possível criar o artista.");return}setNewArtistName("");setArtistNotice("Artista criado.");await loadArtists(responsibleFilter);if(d.artist)await openArtist(d.artist.id)}
-  async function openArtist(id:string){const r=await fetch(`/api/artists/${id}`),d=await r.json() as ArtistDetail;if(!r.ok)return;setSelectedArtist(d);const primary=d.assignments.find(item=>Boolean(item.isPrimary));setPrimaryUserId(primary?.id||"");setAuthorizedUserIds(d.assignments.filter(item=>!item.isPrimary).map(item=>item.id));setArtistNotice("")}
-  async function saveAssignments(){if(!selectedArtist)return;const r=await fetch(`/api/artists/${selectedArtist.artist.id}/sales-team`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({primaryUserId:primaryUserId||null,authorizedUserIds})}),d=await r.json() as {error?:string};if(!r.ok){setArtistNotice(d.error||"Não foi possível salvar as atribuições.");return}setArtistNotice("Equipe comercial atualizada.");await openArtist(selectedArtist.artist.id);await loadArtists(responsibleFilter)}
-  function toggleAuthorized(userId:string){setAuthorizedUserIds(current=>current.includes(userId)?current.filter(id=>id!==userId):[...current,userId])}
-  const commercialMembers=members.filter(member=>member.status==="ACTIVE"&&["OWNER","MANAGER","SALES"].includes(member.role));
-  if(loading)return <main className="center"><div className="loading"><span className="spinner"/>Preparando seu ambiente…</div></main>;
-  if(!organizations.length||formOpen)return <Onboarding form={form} setForm={setForm} save={saveOrganization} editing={editing} cancel={()=>{setEditing(false);setFormOpen(false)}} notice={notice}/>;
-  return <div className="app-shell">
-    <button className="mobile-menu-button" aria-label="Abrir menu" onClick={()=>setMenuOpen(true)}><Menu size={21}/></button>{menuOpen&&<button className="sidebar-backdrop" aria-label="Fechar menu" onClick={()=>setMenuOpen(false)}/>}
-    <aside className={`sidebar ${menuOpen?"is-open":""}`}><div className="sidebar-head"><Brand/><button className="mobile-close" aria-label="Fechar menu" onClick={()=>setMenuOpen(false)}><X size={20}/></button></div><div className="sidebar-org"><div className="org-avatar">{active?.name[0]??organizations[0]?.name[0]}</div><div><small>Organização</small><strong>{active?.name??"Selecione o ambiente"}</strong></div><ChevronDown size={16}/></div><nav aria-label="Navegação principal"><button className={screen==="dashboard"?"nav-active":""} onClick={()=>{setScreen("dashboard");setSelectedArtist(null);setMenuOpen(false)}}><LayoutDashboard/><span>Visão geral</span></button><button className={screen==="artists"?"nav-active":""} onClick={()=>{setScreen("artists");setSelectedArtist(null);setMenuOpen(false)}}><Music2/><span>Artistas</span></button><button className={screen==="agenda"?"nav-active":""} onClick={()=>{setResponsibleFilter("");setAgendaArtistId("");setScreen("agenda");setSelectedArtist(null);setMenuOpen(false)}}><CalendarDays/><span>Agenda</span></button><button className={screen==="crm"?"nav-active":""} onClick={()=>{setScreen("crm");setSelectedArtist(null);setMenuOpen(false)}}><Handshake/><span>CRM</span></button><button className={screen==="contracts"?"nav-active":""} onClick={()=>{setScreen("contracts");setSelectedArtist(null);setMenuOpen(false)}}><FileText/><span>Contratos</span></button><button className={screen==="shows"?"nav-active":""} onClick={()=>{setScreen("shows");setSelectedArtist(null);setMenuOpen(false)}}><CalendarCheck2/><span>Shows</span></button><button className={screen==="catalog"?"nav-active":""} onClick={()=>{setScreen("catalog");setSelectedArtist(null);setMenuOpen(false)}}><Sparkles/><span>Catálogo público</span></button><button><Users/><span>Equipe</span></button><p className="nav-label">Próximos módulos</p>{futureModules.map(([label,Icon])=><button disabled key={label}><Icon/><span>{label}</span><small>Em breve</small></button>)}</nav><div className="sidebar-user"><div className="avatar">{user.name[0]}</div><div><b>{user.name}</b><small>{user.email}</small></div><button className="logout-button" aria-label="Sair" title="Sair" onClick={logout}><LogOut size={17}/></button></div></aside>
-    <main className="workspace"><header className="topbar"><div className="org-picker"><small>Organização ativa</small><div><Building2 size={16}/><select aria-label="Organização ativa" value={active?.id||""} onChange={e=>chooseOrganization(organizations.find(o=>o.id===e.target.value)!)}><option value="" disabled>Selecione uma organização</option>{organizations.map(o=><option value={o.id} key={o.id}>{o.name}</option>)}</select></div></div><button className="button button-secondary" onClick={()=>{setForm(blank);setEditing(false);setFormOpen(true)}}><Plus size={16}/>Nova organização</button></header>
-    <div className="page-content">{!active?<OrganizationEmpty organizations={organizations} choose={chooseOrganization}/>:screen==="crm"?<CrmModule key={active.id} artists={artists}/>:screen==="contracts"?<ContractsModule key={active.id}/>:screen==="shows"?<ShowsModule key={active.id}/>:screen==="catalog"?<CatalogManager key={active.id} organization={active} artists={artists} canManage={canManageAssignments}/>:screen==="agenda"?<CalendarModule key={active.id} artists={artists} initialArtistId={agendaArtistId}/>:screen==="artists"?<ArtistsModule artists={artists} members={commercialMembers} selected={selectedArtist} filter={responsibleFilter} setFilter={setResponsibleFilter} canManage={canManageAssignments} newArtistName={newArtistName} setNewArtistName={setNewArtistName} createArtist={createArtist} openArtist={openArtist} closeArtist={()=>setSelectedArtist(null)} openAgenda={id=>{setAgendaArtistId(id);setResponsibleFilter("");setScreen("agenda");setSelectedArtist(null)}} primaryUserId={primaryUserId} setPrimaryUserId={setPrimaryUserId} authorizedUserIds={authorizedUserIds} toggleAuthorized={toggleAuthorized} saveAssignments={saveAssignments} notice={artistNotice}/>:<Dashboard user={user} active={active} members={members} editOrganization={editOrganization}/>}</div></main>
-  </div>
+type Org = {
+  id: string;
+  name: string;
+  slug: string;
+  email: string;
+  phone?: string;
+  document?: string;
+  website?: string;
+  instagram?: string;
+  logo?: string;
+  description?: string;
+  role: string;
+};
+type Member = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  department?: string;
+  artistAccessScope?: string;
+  artistCount?: number;
+  artistNames?: string[];
+  opportunityCount?: number;
+  salesCount?: number;
+  commissionAmount?: number;
+};
+type Artist = {
+  id: string;
+  name: string;
+  status: string;
+  primaryUserId?: string | null;
+  primaryUserName?: string | null;
+  authorizedCount: number;
+};
+type PublicArtistFields = {
+  id: string;
+  name: string;
+  slug?: string | null;
+  status: string;
+  photoUrl?: string | null;
+  coverUrl?: string | null;
+  genre?: string | null;
+  description?: string | null;
+  baseCity?: string | null;
+  showFormats?: string | null;
+  videoUrls?: string | null;
+  instagram?: string | null;
+  spotify?: string | null;
+  youtube?: string | null;
+  publicMaterials?: string | null;
+  isPublic?: number | boolean;
+};
+type ArtistDetail = {
+  artist: PublicArtistFields;
+  assignments: Array<Member & { isPrimary: number }>;
+  bookingCollaborators: Array<Pick<Member, "id" | "name" | "email" | "status">>;
+  canManageAssignments: boolean;
+};
+type Screen =
+  | "dashboard"
+  | "artists"
+  | "agenda"
+  | "catalog"
+  | "crm"
+  | "contracts"
+  | "shows"
+  | "team";
+const blank = {
+  name: "",
+  email: "",
+  phone: "",
+  document: "",
+  website: "",
+  instagram: "",
+  logo: "",
+  description: "",
+};
+const futureModules = [["Financeiro", CircleDollarSign]] as const;
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-mark">
+        B<span />
+      </span>
+      <b>BookStage</b>
+    </div>
+  );
 }
 
-function OrganizationEmpty({organizations,choose}:{organizations:Org[];choose:(org:Org)=>void}){return <section className="empty-state"><div className="empty-icon"><Building2/></div><p className="eyebrow">Fundação pronta</p><h1>Seu palco operacional começa por aqui.</h1><p>Escolha a organização ativa para acessar o ambiente isolado da sua equipe.</p><div className="org-grid">{organizations.map(o=><button key={o.id} onClick={()=>choose(o)}><span>{o.name[0]}</span><b>{o.name}</b><small>{o.role}</small></button>)}</div></section>}
-function Dashboard({user,active}:{user:{name:string};active:Org;members:Member[];editOrganization:()=>void}){return <DashboardModule userName={user.name} organizationName={active.name}/>}
-
-function ArtistsModule(props:{artists:Artist[];members:Member[];selected:ArtistDetail|null;filter:string;setFilter:(v:string)=>void;canManage:boolean;newArtistName:string;setNewArtistName:(v:string)=>void;createArtist:(e:React.FormEvent)=>void;openArtist:(id:string)=>void;closeArtist:()=>void;openAgenda:(id:string)=>void;primaryUserId:string;setPrimaryUserId:(id:string)=>void;authorizedUserIds:string[];toggleAuthorized:(id:string)=>void;saveAssignments:()=>void;notice:string}){
-  if(props.selected)return <section className="artist-profile"><button className="back-button" onClick={props.closeArtist}><ArrowLeft/>Voltar para artistas</button><div className="artist-profile-head"><div className="artist-monogram">{props.selected.artist.name[0]}</div><div><p className="eyebrow">Perfil do artista</p><h1>{props.selected.artist.name}</h1><span className="status-badge">{props.selected.artist.status}</span></div><button className="button button-secondary artist-agenda-button" onClick={()=>props.openAgenda(props.selected!.artist.id)}><CalendarDays size={16}/>Ver agenda do artista</button></div><section className="commercial-card"><div className="section-heading"><div><p className="eyebrow">Equipe comercial</p><h2>Responsáveis pelo relacionamento</h2><p>Esta definição poderá ser herdada automaticamente por oportunidades futuras.</p></div>{props.selected.canManageAssignments&&<button className="button button-primary" onClick={props.saveAssignments}><Save size={16}/>Salvar atribuições</button>}</div>{props.notice&&<div className="notice">{props.notice}</div>}<div className="assignment-grid"><label>Responsável comercial principal<select value={props.primaryUserId} disabled={!props.selected.canManageAssignments} onChange={e=>props.setPrimaryUserId(e.target.value)}><option value="">Sem responsável principal</option>{props.members.map(member=><option key={member.id} value={member.id}>{member.name} · {member.role}</option>)}</select><small>Será o responsável padrão em oportunidades futuras.</small></label><fieldset disabled={!props.selected.canManageAssignments}><legend>Comerciais autorizados</legend><div className="authorized-list">{props.members.filter(member=>member.id!==props.primaryUserId).map(member=><label className="authorized-option" key={member.id}><span className="sr-only">Autorizar comercial</span><input type="checkbox" checked={props.authorizedUserIds.includes(member.id)} onChange={()=>props.toggleAuthorized(member.id)}/><span><b>{member.name}</b><small>{member.email} · {member.role}</small></span></label>)}</div></fieldset></div></section></section>;
-  return <section><div className="page-heading artists-heading"><div><p className="eyebrow">Artistas</p><h1>Gestão de artistas</h1><p>Visualize responsáveis e organize a cobertura comercial da sua equipe.</p></div>{props.canManage&&<form className="quick-create" onSubmit={props.createArtist}><input aria-label="Nome do novo artista" placeholder="Nome do artista" value={props.newArtistName} onChange={e=>props.setNewArtistName(e.target.value)}/><button className="button button-primary"><Plus size={16}/>Adicionar artista</button></form>}</div>{props.notice&&<div className="notice">{props.notice}</div>}<div className="artists-toolbar"><label>Filtrar por responsável<select value={props.filter} onChange={e=>props.setFilter(e.target.value)}><option value="">Todos os responsáveis</option>{props.members.map(member=><option key={member.id} value={member.id}>{member.name}</option>)}</select></label><span>{props.artists.length} {props.artists.length===1?"artista":"artistas"}</span></div><div className="artists-table"><div className="artists-table-head"><span>Artista</span><span>Responsável principal</span><span>Autorizados</span><span>Status</span><span/></div>{props.artists.map(artist=><div className="artist-row" key={artist.id}><div className="artist-cell"><span>{artist.name[0]}</span><b>{artist.name}</b></div><span>{artist.primaryUserName||"Não atribuído"}</span><span>{Number(artist.authorizedCount)||0}</span><em className="status-badge">{artist.status}</em><button className="table-action" onClick={()=>props.openArtist(artist.id)}>Abrir</button></div>)}{!props.artists.length&&<div className="table-empty">Nenhum artista encontrado para este filtro.</div>}</div></section>
+export function BookStageApp({
+  user,
+}: {
+  user: { id: string; email: string; name: string };
+}) {
+  const [organizations, setOrganizations] = useState<Org[]>([]),
+    [active, setActive] = useState<Org | null>(null),
+    [members, setMembers] = useState<Member[]>([]),
+    [artists, setArtists] = useState<Artist[]>([]);
+  const [screen, setScreen] = useState<Screen>("dashboard"),
+    [selectedArtist, setSelectedArtist] = useState<ArtistDetail | null>(null),
+    [responsibleFilter, setResponsibleFilter] = useState(""),
+    [newArtistName, setNewArtistName] = useState(""),
+    [agendaArtistId, setAgendaArtistId] = useState("");
+  const [primaryUserId, setPrimaryUserId] = useState(""),
+    [authorizedUserIds, setAuthorizedUserIds] = useState<string[]>([]),
+    [canManageAssignments, setCanManageAssignments] = useState(false),
+    [artistNotice, setArtistNotice] = useState("");
+  const [editing, setEditing] = useState(false),
+    [formOpen, setFormOpen] = useState(false),
+    [menuOpen, setMenuOpen] = useState(false),
+    [form, setForm] = useState(blank),
+    [loading, setLoading] = useState(true),
+    [notice, setNotice] = useState("");
+  const loadOrganizations = useCallback(async () => {
+    const r = await fetch("/api/organizations"),
+      d = (await r.json()) as { organizations?: Org[] };
+    setOrganizations(d.organizations || []);
+    setLoading(false);
+  }, []);
+  const loadArtists = useCallback(async (filter = "") => {
+    const suffix = filter ? `?responsibleId=${encodeURIComponent(filter)}` : "",
+      r = await fetch(`/api/artists${suffix}`),
+      d = (await r.json()) as {
+        artists?: Artist[];
+        canManageAssignments?: boolean;
+      };
+    if (r.ok) {
+      setArtists(d.artists || []);
+      setCanManageAssignments(Boolean(d.canManageAssignments));
+    }
+  }, []);
+  useEffect(() => {
+    fetch("/api/organizations")
+      .then((r) => r.json() as Promise<{ organizations?: Org[] }>)
+      .then((d) => {
+        setOrganizations(d.organizations || []);
+        setLoading(false);
+      });
+  }, []);
+  useEffect(() => {
+    if (active) {
+      fetch(`/api/organizations/${active.id}/members`)
+        .then((r) => r.json() as Promise<{ members?: Member[] }>)
+        .then((d) => setMembers(d.members || []));
+      const suffix = responsibleFilter
+        ? `?responsibleId=${encodeURIComponent(responsibleFilter)}`
+        : "";
+      fetch(`/api/artists${suffix}`)
+        .then(
+          (r) =>
+            r.json() as Promise<{
+              artists?: Artist[];
+              canManageAssignments?: boolean;
+            }>,
+        )
+        .then((d) => {
+          setArtists(d.artists || []);
+          setCanManageAssignments(Boolean(d.canManageAssignments));
+        });
+    }
+  }, [active, responsibleFilter]);
+  async function saveOrganization(e: React.FormEvent) {
+    e.preventDefault();
+    const url =
+        editing && active
+          ? `/api/organizations/${active.id}`
+          : "/api/organizations",
+      r = await fetch(url, {
+        method: editing ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(form),
+      }),
+      d = (await r.json()) as { error?: string; organization?: Org };
+    if (!r.ok) {
+      setNotice(d.error || "Não foi possível salvar.");
+      return;
+    }
+    setNotice(editing ? "Organização atualizada." : "Organização criada.");
+    setEditing(false);
+    setFormOpen(false);
+    setForm(blank);
+    await loadOrganizations();
+    if (d.organization) await chooseOrganization(d.organization);
+  }
+  async function chooseOrganization(org: Org) {
+    const r = await fetch("/api/active-organization", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ organizationId: org.id }),
+    });
+    if (r.ok) {
+      setActive(org);
+      setScreen("dashboard");
+      setSelectedArtist(null);
+      setAgendaArtistId("");
+      setNotice("");
+      setResponsibleFilter("");
+    }
+  }
+  function editOrganization() {
+    if (!active) return;
+    setForm({
+      name: active.name,
+      email: active.email,
+      phone: active.phone || "",
+      document: active.document || "",
+      website: active.website || "",
+      instagram: active.instagram || "",
+      logo: active.logo || "",
+      description: active.description || "",
+    });
+    setEditing(true);
+    setFormOpen(true);
+  }
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    location.reload();
+  }
+  async function createArtist(e: React.FormEvent) {
+    e.preventDefault();
+    const r = await fetch("/api/artists", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newArtistName }),
+      }),
+      d = (await r.json()) as { error?: string; artist?: Artist };
+    if (!r.ok) {
+      setArtistNotice(d.error || "Não foi possível criar o artista.");
+      return;
+    }
+    setNewArtistName("");
+    setArtistNotice("Artista criado.");
+    await loadArtists(responsibleFilter);
+    if (d.artist) await openArtist(d.artist.id);
+  }
+  async function openArtist(id: string) {
+    const r = await fetch(`/api/artists/${id}`),
+      d = (await r.json()) as ArtistDetail;
+    if (!r.ok) return;
+    setSelectedArtist(d);
+    const primary = d.assignments.find((item) => Boolean(item.isPrimary));
+    setPrimaryUserId(primary?.id || "");
+    setAuthorizedUserIds(
+      d.assignments.filter((item) => !item.isPrimary).map((item) => item.id),
+    );
+    setArtistNotice("");
+  }
+  async function saveAssignments() {
+    if (!selectedArtist) return;
+    const r = await fetch(
+        `/api/artists/${selectedArtist.artist.id}/sales-team`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            primaryUserId: primaryUserId || null,
+            authorizedUserIds,
+          }),
+        },
+      ),
+      d = (await r.json()) as { error?: string };
+    if (!r.ok) {
+      setArtistNotice(d.error || "Não foi possível salvar as atribuições.");
+      return;
+    }
+    setArtistNotice("Equipe comercial atualizada.");
+    await openArtist(selectedArtist.artist.id);
+    await loadArtists(responsibleFilter);
+  }
+  function toggleAuthorized(userId: string) {
+    setAuthorizedUserIds((current) =>
+      current.includes(userId)
+        ? current.filter((id) => id !== userId)
+        : [...current, userId],
+    );
+  }
+  const commercialMembers = members.filter(
+    (member) =>
+      member.status === "ACTIVE" &&
+      ["OWNER", "MANAGER", "SALES"].includes(member.role),
+  );
+  if (loading)
+    return (
+      <main className="center">
+        <div className="loading">
+          <span className="spinner" />
+          Preparando seu ambiente…
+        </div>
+      </main>
+    );
+  if (!organizations.length || formOpen)
+    return (
+      <Onboarding
+        form={form}
+        setForm={setForm}
+        save={saveOrganization}
+        editing={editing}
+        cancel={() => {
+          setEditing(false);
+          setFormOpen(false);
+        }}
+        notice={notice}
+      />
+    );
+  return (
+    <div className="app-shell">
+      <button
+        className="mobile-menu-button"
+        aria-label="Abrir menu"
+        onClick={() => setMenuOpen(true)}
+      >
+        <Menu size={21} />
+      </button>
+      {menuOpen && (
+        <button
+          className="sidebar-backdrop"
+          aria-label="Fechar menu"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+      <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
+        <div className="sidebar-head">
+          <Brand />
+          <button
+            className="mobile-close"
+            aria-label="Fechar menu"
+            onClick={() => setMenuOpen(false)}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div className="sidebar-org">
+          <div className="org-avatar">
+            {active?.name[0] ?? organizations[0]?.name[0]}
+          </div>
+          <div>
+            <small>Organização</small>
+            <strong>{active?.name ?? "Selecione o ambiente"}</strong>
+          </div>
+          <ChevronDown size={16} />
+        </div>
+        <nav aria-label="Navegação principal">
+          <button
+            className={screen === "dashboard" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("dashboard");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <LayoutDashboard />
+            <span>Visão geral</span>
+          </button>
+          <button
+            className={screen === "artists" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("artists");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <Music2 />
+            <span>Artistas</span>
+          </button>
+          <button
+            className={screen === "agenda" ? "nav-active" : ""}
+            onClick={() => {
+              setResponsibleFilter("");
+              setAgendaArtistId("");
+              setScreen("agenda");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <CalendarDays />
+            <span>Agenda</span>
+          </button>
+          <button
+            className={screen === "crm" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("crm");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <Handshake />
+            <span>CRM</span>
+          </button>
+          <button
+            className={screen === "contracts" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("contracts");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <FileText />
+            <span>Contratos</span>
+          </button>
+          <button
+            className={screen === "shows" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("shows");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <CalendarCheck2 />
+            <span>Shows</span>
+          </button>
+          <button
+            className={screen === "catalog" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("catalog");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <Sparkles />
+            <span>Catálogo público</span>
+          </button>
+          <button
+            className={screen === "team" ? "nav-active" : ""}
+            onClick={() => {
+              setScreen("team");
+              setSelectedArtist(null);
+              setMenuOpen(false);
+            }}
+          >
+            <Users />
+            <span>Equipe</span>
+          </button>
+          <p className="nav-label">Próximos módulos</p>
+          {futureModules.map(([label, Icon]) => (
+            <button disabled key={label}>
+              <Icon />
+              <span>{label}</span>
+              <small>Em breve</small>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-user">
+          <div className="avatar">{user.name[0]}</div>
+          <div>
+            <b>{user.name}</b>
+            <small>{user.email}</small>
+          </div>
+          <button
+            className="logout-button"
+            aria-label="Sair"
+            title="Sair"
+            onClick={logout}
+          >
+            <LogOut size={17} />
+          </button>
+        </div>
+      </aside>
+      <main className="workspace">
+        <header className="topbar">
+          <div className="org-picker">
+            <small>Organização ativa</small>
+            <div>
+              <Building2 size={16} />
+              <select
+                aria-label="Organização ativa"
+                value={active?.id || ""}
+                onChange={(e) =>
+                  chooseOrganization(
+                    organizations.find((o) => o.id === e.target.value)!,
+                  )
+                }
+              >
+                <option value="" disabled>
+                  Selecione uma organização
+                </option>
+                {organizations.map((o) => (
+                  <option value={o.id} key={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <button
+            className="button button-secondary"
+            onClick={() => {
+              setForm(blank);
+              setEditing(false);
+              setFormOpen(true);
+            }}
+          >
+            <Plus size={16} />
+            Nova organização
+          </button>
+        </header>
+        <div className="page-content">
+          {!active ? (
+            <OrganizationEmpty
+              organizations={organizations}
+              choose={chooseOrganization}
+            />
+          ) : screen === "crm" ? (
+            <CrmModule key={active.id} artists={artists} />
+          ) : screen === "contracts" ? (
+            <ContractsModule key={active.id} />
+          ) : screen === "shows" ? (
+            <ShowsModule key={active.id} />
+          ) : screen === "catalog" ? (
+            <CatalogManager
+              key={active.id}
+              organization={active}
+              artists={artists}
+              canManage={canManageAssignments}
+            />
+          ) : screen === "team" ? (
+            <TeamModule
+              key={active.id}
+              organizationId={active.id}
+              onMembersChanged={() =>
+                fetch(`/api/organizations/${active.id}/members`)
+                  .then(
+                    (response) =>
+                      response.json() as Promise<{ members?: Member[] }>,
+                  )
+                  .then((data) => setMembers(data.members || []))
+              }
+            />
+          ) : screen === "agenda" ? (
+            <CalendarModule
+              key={active.id}
+              artists={artists}
+              initialArtistId={agendaArtistId}
+            />
+          ) : screen === "artists" ? (
+            <ArtistsModule
+              artists={artists}
+              members={commercialMembers}
+              selected={selectedArtist}
+              filter={responsibleFilter}
+              setFilter={setResponsibleFilter}
+              canManage={canManageAssignments}
+              newArtistName={newArtistName}
+              setNewArtistName={setNewArtistName}
+              createArtist={createArtist}
+              openArtist={openArtist}
+              closeArtist={() => setSelectedArtist(null)}
+              openAgenda={(id) => {
+                setAgendaArtistId(id);
+                setResponsibleFilter("");
+                setScreen("agenda");
+                setSelectedArtist(null);
+              }}
+              primaryUserId={primaryUserId}
+              setPrimaryUserId={setPrimaryUserId}
+              authorizedUserIds={authorizedUserIds}
+              toggleAuthorized={toggleAuthorized}
+              saveAssignments={saveAssignments}
+              notice={artistNotice}
+            />
+          ) : (
+            <Dashboard
+              user={user}
+              active={active}
+              members={members}
+              editOrganization={editOrganization}
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  );
 }
-function Onboarding({form,setForm,save,editing,cancel,notice}:{form:typeof blank;setForm:(x:typeof blank)=>void;save:(e:React.FormEvent)=>void;editing:boolean;cancel:()=>void;notice:string}){const field=(key:keyof typeof blank,label:string,placeholder="")=><label>{label}<input value={form[key]} placeholder={placeholder} onChange={e=>setForm({...form,[key]:e.target.value})}/></label>;return <main className="onboarding"><section className="onboard-intro"><Brand/><div><p className="eyebrow">{editing?"Configurações":"Primeiro passo"}</p><h1>{editing?"Ajuste os dados da organização.":"Vamos preparar seu ambiente."}</h1><p>Essa organização será o espaço seguro e isolado onde sua operação de shows vai acontecer.</p><ul><li><ShieldCheck/>Isolamento por organização</li><li><Users/>Perfis e permissões no servidor</li><li><LayoutDashboard/>Base pronta para crescer</li></ul></div><p className="product-line">Todo o modelo operacional de shows em um só lugar.</p></section><form className="organization-form" onSubmit={save}><div className="form-heading"><span className="form-step">01</span><div><p className="eyebrow">Dados da organização</p><h2>{editing?"Editar organização":"Crie sua organização"}</h2></div></div>{notice&&<div className="notice">{notice}</div>}{field("name","Nome da organização *","Ex.: Aurora Produções")}{field("email","E-mail comercial *","contato@empresa.com.br")}<div className="form-row">{field("phone","Telefone","(11) 99999-9999")}{field("document","CNPJ (opcional)","00.000.000/0001-00")}</div>{field("website","Website","https://")}{field("instagram","Instagram","@suaempresa")}{field("logo","URL do logo","https://...")}<div className="form-actions">{editing&&<button type="button" className="button button-secondary" onClick={cancel}>Cancelar</button>}<button className="button button-primary">{editing?"Salvar alterações":"Criar meu ambiente"}</button></div></form></main>}
+
+function OrganizationEmpty({
+  organizations,
+  choose,
+}: {
+  organizations: Org[];
+  choose: (org: Org) => void;
+}) {
+  return (
+    <section className="empty-state">
+      <div className="empty-icon">
+        <Building2 />
+      </div>
+      <p className="eyebrow">Fundação pronta</p>
+      <h1>Seu palco operacional começa por aqui.</h1>
+      <p>
+        Escolha a organização ativa para acessar o ambiente isolado da sua
+        equipe.
+      </p>
+      <div className="org-grid">
+        {organizations.map((o) => (
+          <button key={o.id} onClick={() => choose(o)}>
+            <span>{o.name[0]}</span>
+            <b>{o.name}</b>
+            <small>{o.role}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+function Dashboard({
+  user,
+  active,
+}: {
+  user: { name: string };
+  active: Org;
+  members: Member[];
+  editOrganization: () => void;
+}) {
+  return (
+    <DashboardModule userName={user.name} organizationName={active.name} />
+  );
+}
+
+function ArtistsModule(props: {
+  artists: Artist[];
+  members: Member[];
+  selected: ArtistDetail | null;
+  filter: string;
+  setFilter: (v: string) => void;
+  canManage: boolean;
+  newArtistName: string;
+  setNewArtistName: (v: string) => void;
+  createArtist: (e: React.FormEvent) => void;
+  openArtist: (id: string) => void;
+  closeArtist: () => void;
+  openAgenda: (id: string) => void;
+  primaryUserId: string;
+  setPrimaryUserId: (id: string) => void;
+  authorizedUserIds: string[];
+  toggleAuthorized: (id: string) => void;
+  saveAssignments: () => void;
+  notice: string;
+}) {
+  if (props.selected)
+    return (
+      <section className="artist-profile">
+        <button className="back-button" onClick={props.closeArtist}>
+          <ArrowLeft />
+          Voltar para artistas
+        </button>
+        <div className="artist-profile-head">
+          <div className="artist-monogram">{props.selected.artist.name[0]}</div>
+          <div>
+            <p className="eyebrow">Perfil do artista</p>
+            <h1>{props.selected.artist.name}</h1>
+            <span className="status-badge">{props.selected.artist.status}</span>
+          </div>
+          <button
+            className="button button-secondary artist-agenda-button"
+            onClick={() => props.openAgenda(props.selected!.artist.id)}
+          >
+            <CalendarDays size={16} />
+            Ver agenda do artista
+          </button>
+        </div>
+        <section className="commercial-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Equipe comercial</p>
+              <h2>Responsáveis pelo relacionamento</h2>
+              <p>
+                Esta definição poderá ser herdada automaticamente por
+                oportunidades futuras.
+              </p>
+            </div>
+            {props.selected.canManageAssignments && (
+              <button
+                className="button button-primary"
+                onClick={props.saveAssignments}
+              >
+                <Save size={16} />
+                Salvar atribuições
+              </button>
+            )}
+          </div>
+          {props.notice && <div className="notice">{props.notice}</div>}
+          <div className="assignment-grid">
+            <label>
+              Responsável comercial principal
+              <select
+                value={props.primaryUserId}
+                disabled={!props.selected.canManageAssignments}
+                onChange={(e) => props.setPrimaryUserId(e.target.value)}
+              >
+                <option value="">Sem responsável principal</option>
+                {props.members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name} · {member.role}
+                  </option>
+                ))}
+              </select>
+              <small>Será o responsável padrão em oportunidades futuras.</small>
+            </label>
+            <fieldset disabled={!props.selected.canManageAssignments}>
+              <legend>Comerciais autorizados</legend>
+              <div className="authorized-list">
+                {props.members
+                  .filter((member) => member.id !== props.primaryUserId)
+                  .map((member) => (
+                    <label className="authorized-option" key={member.id}>
+                      <span className="sr-only">Autorizar comercial</span>
+                      <input
+                        type="checkbox"
+                        checked={props.authorizedUserIds.includes(member.id)}
+                        onChange={() => props.toggleAuthorized(member.id)}
+                      />
+                      <span>
+                        <b>{member.name}</b>
+                        <small>
+                          {member.email} · {member.role}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+              </div>
+            </fieldset>
+          </div>
+        </section>
+        <section className="commercial-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Colaboradores de Booking</p>
+              <h2>Parceiros autorizados para este artista</h2>
+              <p>
+                Estes colaboradores podem negociar e preparar uma venda, mas a
+                validação permanece com o comercial interno acima.
+              </p>
+            </div>
+            <span className="count-badge">
+              {props.selected.bookingCollaborators.length}
+            </span>
+          </div>
+          <div className="authorized-list">
+            {props.selected.bookingCollaborators.map((member) => (
+              <div className="authorized-option" key={member.id}>
+                <Users size={18} />
+                <span>
+                  <b>{member.name}</b>
+                  <small>{member.email} · Booking</small>
+                </span>
+              </div>
+            ))}
+            {!props.selected.bookingCollaborators.length && (
+              <p className="table-empty">
+                Nenhum colaborador de Booking autorizado. Faça a vinculação pela
+                aba Equipe.
+              </p>
+            )}
+          </div>
+        </section>
+      </section>
+    );
+  return (
+    <section>
+      <div className="page-heading artists-heading">
+        <div>
+          <p className="eyebrow">Artistas</p>
+          <h1>Gestão de artistas</h1>
+          <p>
+            Visualize responsáveis e organize a cobertura comercial da sua
+            equipe.
+          </p>
+        </div>
+        {props.canManage && (
+          <form className="quick-create" onSubmit={props.createArtist}>
+            <input
+              aria-label="Nome do novo artista"
+              placeholder="Nome do artista"
+              value={props.newArtistName}
+              onChange={(e) => props.setNewArtistName(e.target.value)}
+            />
+            <button className="button button-primary">
+              <Plus size={16} />
+              Adicionar artista
+            </button>
+          </form>
+        )}
+      </div>
+      {props.notice && <div className="notice">{props.notice}</div>}
+      <div className="artists-toolbar">
+        <label>
+          Filtrar por responsável
+          <select
+            value={props.filter}
+            onChange={(e) => props.setFilter(e.target.value)}
+          >
+            <option value="">Todos os responsáveis</option>
+            {props.members.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>
+          {props.artists.length}{" "}
+          {props.artists.length === 1 ? "artista" : "artistas"}
+        </span>
+      </div>
+      <div className="artists-table">
+        <div className="artists-table-head">
+          <span>Artista</span>
+          <span>Responsável principal</span>
+          <span>Autorizados</span>
+          <span>Status</span>
+          <span />
+        </div>
+        {props.artists.map((artist) => (
+          <div className="artist-row" key={artist.id}>
+            <div className="artist-cell">
+              <span>{artist.name[0]}</span>
+              <b>{artist.name}</b>
+            </div>
+            <span>{artist.primaryUserName || "Não atribuído"}</span>
+            <span>{Number(artist.authorizedCount) || 0}</span>
+            <em className="status-badge">{artist.status}</em>
+            <button
+              className="table-action"
+              onClick={() => props.openArtist(artist.id)}
+            >
+              Abrir
+            </button>
+          </div>
+        ))}
+        {!props.artists.length && (
+          <div className="table-empty">
+            Nenhum artista encontrado para este filtro.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+function Onboarding({
+  form,
+  setForm,
+  save,
+  editing,
+  cancel,
+  notice,
+}: {
+  form: typeof blank;
+  setForm: (x: typeof blank) => void;
+  save: (e: React.FormEvent) => void;
+  editing: boolean;
+  cancel: () => void;
+  notice: string;
+}) {
+  const field = (key: keyof typeof blank, label: string, placeholder = "") => (
+    <label>
+      {label}
+      <input
+        value={form[key]}
+        placeholder={placeholder}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+      />
+    </label>
+  );
+  return (
+    <main className="onboarding">
+      <section className="onboard-intro">
+        <Brand />
+        <div>
+          <p className="eyebrow">
+            {editing ? "Configurações" : "Primeiro passo"}
+          </p>
+          <h1>
+            {editing
+              ? "Ajuste os dados da organização."
+              : "Vamos preparar seu ambiente."}
+          </h1>
+          <p>
+            Essa organização será o espaço seguro e isolado onde sua operação de
+            shows vai acontecer.
+          </p>
+          <ul>
+            <li>
+              <ShieldCheck />
+              Isolamento por organização
+            </li>
+            <li>
+              <Users />
+              Perfis e permissões no servidor
+            </li>
+            <li>
+              <LayoutDashboard />
+              Base pronta para crescer
+            </li>
+          </ul>
+        </div>
+        <p className="product-line">
+          Todo o modelo operacional de shows em um só lugar.
+        </p>
+      </section>
+      <form className="organization-form" onSubmit={save}>
+        <div className="form-heading">
+          <span className="form-step">01</span>
+          <div>
+            <p className="eyebrow">Dados da organização</p>
+            <h2>{editing ? "Editar organização" : "Crie sua organização"}</h2>
+          </div>
+        </div>
+        {notice && <div className="notice">{notice}</div>}
+        {field("name", "Nome da organização *", "Ex.: Aurora Produções")}
+        {field("email", "E-mail comercial *", "contato@empresa.com.br")}
+        <div className="form-row">
+          {field("phone", "Telefone", "(11) 99999-9999")}
+          {field("document", "CNPJ (opcional)", "00.000.000/0001-00")}
+        </div>
+        {field("website", "Website", "https://")}
+        {field("instagram", "Instagram", "@suaempresa")}
+        {field("logo", "URL do logo", "https://...")}
+        <div className="form-actions">
+          {editing && (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={cancel}
+            >
+              Cancelar
+            </button>
+          )}
+          <button className="button button-primary">
+            {editing ? "Salvar alterações" : "Criar meu ambiente"}
+          </button>
+        </div>
+      </form>
+    </main>
+  );
+}

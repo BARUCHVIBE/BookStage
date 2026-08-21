@@ -4,10 +4,13 @@ import { LoginForm } from "./login-form";
 import { currentUser } from "./lib/request-context";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "BookStage — Operação de shows", description: "Todo o modelo operacional de shows em um só lugar." };
+export const metadata: Metadata = {
+  title: "BookStage — Operação de shows",
+  description: "Todo o modelo operacional de shows em um só lugar.",
+};
 
 export default async function Home() {
   const user = await currentUser();
-  if (!user) return <LoginForm/>;
-  return <BookStageApp user={user}/>;
+  if (!user) return <LoginForm />;
+  return <BookStageApp user={user} />;
 }

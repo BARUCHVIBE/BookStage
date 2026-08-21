@@ -1,12 +1,92 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { canAccessOpportunity,opportunityStages,parseProposedValue,validateOpportunityStage,validateStageChange } from "../app/lib/opportunity-rules";
+import {
+  canAccessOpportunity,
+  opportunityStages,
+  parseProposedValue,
+  validateOpportunityStage,
+  validateStageChange,
+} from "../app/lib/opportunity-rules";
 
-test("pipeline contém todas as etapas comerciais na ordem definida",()=>{assert.deepEqual(opportunityStages,["NEW","CONTACTED","QUALIFIED","PROPOSAL","NEGOTIATION","DATE_OPTION","CONTRACT","CLOSED_WON","CLOSED_LOST"]);assert.equal(validateOpportunityStage("NEGOTIATION"),"NEGOTIATION");assert.throws(()=>validateOpportunityStage("INVALID"),/inválida/)});
-test("fechamento perdido exige motivo",()=>{assert.throws(()=>validateStageChange("CLOSED_LOST",""),/motivo/);assert.equal(validateStageChange("CLOSED_LOST","Sem orçamento"),"Sem orçamento");assert.equal(validateStageChange("CLOSED_WON","ignorado"),null)});
-test("valor proposto é persistido em centavos",()=>{assert.equal(parseProposedValue(1250000),1250000);assert.equal(parseProposedValue(""),null);assert.throws(()=>parseProposedValue(-1),/inválido/)});
-test("OWNER e MANAGER veem a organização e SALES somente suas oportunidades",()=>{assert.equal(canAccessOpportunity("OWNER",null,"owner"),true);assert.equal(canAccessOpportunity("MANAGER","sales-b","manager"),true);assert.equal(canAccessOpportunity("SALES","sales-a","sales-a"),true);assert.equal(canAccessOpportunity("SALES","sales-b","sales-a"),false);assert.equal(canAccessOpportunity("FINANCE","finance","finance"),false)});
-test("migration preserva solicitações e impõe chaves compostas de tenant",async()=>{const sql=await readFile(new URL("../drizzle/0006_slow_midnight.sql",import.meta.url),"utf8");assert.match(sql,/INSERT INTO `opportunities`[\s\S]+FROM `booking_requests`/);assert.match(sql,/FOREIGN KEY \(`artist_id`,`organization_id`\)/);assert.match(sql,/FOREIGN KEY \(`customer_id`,`organization_id`\)/);assert.match(sql,/FOREIGN KEY \(`organization_id`,`assigned_user_id`\)/);assert.match(sql,/FOREIGN KEY \(`opportunity_id`,`organization_id`\)/)});
-test("rota pública cria oportunidade, histórico e herda responsável",async()=>{const source=await readFile(new URL("../app/api/public/catalog/[organizationSlug]/[artistSlug]/requests/route.ts",import.meta.url),"utf8");assert.match(source,/INSERT INTO opportunities/);assert.match(source,/INSERT INTO opportunity_activities/);assert.match(source,/getArtistPrimaryCommercial/);assert.match(source,/PUBLIC_CATALOG/)});
-test("consultas internas protegem organização e escopo SALES",async()=>{const list=await readFile(new URL("../app/api/opportunities/route.ts",import.meta.url),"utf8"),detail=await readFile(new URL("../app/api/opportunities/[id]/route.ts",import.meta.url),"utf8");assert.match(list,/opportunity\.organization_id=\?/);assert.match(list,/opportunity\.assigned_user_id=\?/);assert.match(detail,/id=\? AND organization_id=\?/);assert.match(detail,/canAccessOpportunity/);assert.match(detail,/organization_id=\? AND user_id=\?/)});
+test("pipeline contém todas as etapas comerciais na ordem definida", () => {
+  assert.deepEqual(opportunityStages, [
+    "NEW",
+    "CONTACTED",
+    "QUALIFIED",
+    "PROPOSAL",
+    "NEGOTIATION",
+    "DATE_OPTION",
+    "CONTRACT",
+    "CLOSED_WON",
+    "CLOSED_LOST",
+  ]);
+  assert.equal(validateOpportunityStage("NEGOTIATION"), "NEGOTIATION");
+  assert.throws(() => validateOpportunityStage("INVALID"), /inválida/);
+});
+test("fechamento perdido exige motivo", () => {
+  assert.throws(() => validateStageChange("CLOSED_LOST", ""), /motivo/);
+  assert.equal(
+    validateStageChange("CLOSED_LOST", "Sem orçamento"),
+    "Sem orçamento",
+  );
+  assert.equal(validateStageChange("CLOSED_WON", "ignorado"), null);
+});
+test("valor proposto é persistido em centavos", () => {
+  assert.equal(parseProposedValue(1250000), 1250000);
+  assert.equal(parseProposedValue(""), null);
+  assert.throws(() => parseProposedValue(-1), /inválido/);
+});
+test("gestão vê o tenant, comercial vê atribuídas/originadas e FINANCE possui leitura", () => {
+  assert.equal(canAccessOpportunity("OWNER", null, "owner"), true);
+  assert.equal(canAccessOpportunity("MANAGER", "sales-b", "manager"), true);
+  assert.equal(canAccessOpportunity("SALES", "sales-a", "sales-a"), true);
+  assert.equal(
+    canAccessOpportunity("BOOKING_AGENT", "sales-b", "sales-a", "sales-a"),
+    true,
+  );
+  assert.equal(canAccessOpportunity("SALES", "sales-b", "sales-a"), false);
+  assert.equal(canAccessOpportunity("FINANCE", "sales", "finance"), true);
+});
+test("migration preserva solicitações e impõe chaves compostas de tenant", async () => {
+  const sql = await readFile(
+    new URL("../drizzle/0006_slow_midnight.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    sql,
+    /INSERT INTO `opportunities`[\s\S]+FROM `booking_requests`/,
+  );
+  assert.match(sql, /FOREIGN KEY \(`artist_id`,`organization_id`\)/);
+  assert.match(sql, /FOREIGN KEY \(`customer_id`,`organization_id`\)/);
+  assert.match(sql, /FOREIGN KEY \(`organization_id`,`assigned_user_id`\)/);
+  assert.match(sql, /FOREIGN KEY \(`opportunity_id`,`organization_id`\)/);
+});
+test("rota pública cria oportunidade, histórico e herda responsável", async () => {
+  const source = await readFile(
+    new URL(
+      "../app/api/public/catalog/[organizationSlug]/[artistSlug]/requests/route.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(source, /INSERT INTO opportunities/);
+  assert.match(source, /INSERT INTO opportunity_activities/);
+  assert.match(source, /getArtistPrimaryCommercial/);
+  assert.match(source, /PUBLIC_CATALOG/);
+});
+test("consultas internas protegem organização e escopo SALES", async () => {
+  const list = await readFile(
+      new URL("../app/api/opportunities/route.ts", import.meta.url),
+      "utf8",
+    ),
+    detail = await readFile(
+      new URL("../app/api/opportunities/[id]/route.ts", import.meta.url),
+      "utf8",
+    );
+  assert.match(list, /opportunity\.organization_id=\?/);
+  assert.match(list, /opportunity\.assigned_user_id=\?/);
+  assert.match(detail, /id=\? AND organization_id=\?/);
+  assert.match(detail, /canAccessOpportunity/);
+  assert.match(detail, /organization_id=\? AND user_id=\?/);
+});

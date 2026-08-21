@@ -1,41 +1,748 @@
 "use client";
 
-import { ArrowLeft, Ban, CalendarCheck2, Check, Download, FileUp, Hotel, MapPin, Plane, Save, Truck, Upload, UserRound, Wrench } from "lucide-react";
+import {
+  ArrowLeft,
+  Ban,
+  CalendarCheck2,
+  Check,
+  Download,
+  FileUp,
+  Hotel,
+  MapPin,
+  Plane,
+  Save,
+  Truck,
+  Upload,
+  UserRound,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ShowFinance } from "@/app/components/show-finance";
 
 type Status = "CONFIRMED" | "IN_PREPARATION" | "COMPLETED" | "CANCELLED";
-type Item = { id: string; eventName: string; date: string; showTime: string | null; venue: string | null; city: string; state: string; status: Status; artistName: string; producerName: string | null; customerName?: string; fee?: number | null; opportunityId?: string };
-type Activity = { id: string; type: string; description: string; createdAt: string; authorName: string | null };
+type Item = {
+  id: string;
+  eventName: string;
+  date: string;
+  showTime: string | null;
+  venue: string | null;
+  city: string;
+  state: string;
+  status: Status;
+  artistName: string;
+  producerName: string | null;
+  customerName?: string;
+  fee?: number | null;
+  opportunityId?: string;
+};
+type Activity = {
+  id: string;
+  type: string;
+  description: string;
+  createdAt: string;
+  authorName: string | null;
+};
 type Producer = { id: string; name: string; role: string };
-type Detail = Item & { address: string | null; localContactName: string | null; localContactPhone: string | null; producerUserId: string | null; soundcheckAt: string | null; hotel: string | null; transportation: string | null; airport: string | null; dressingRoom: string | null; technicalInfo: string | null; productionNotes: string | null; riderFileName: string | null; riderFileSize: number | null; stageMapFileName: string | null; stageMapFileSize: number | null; createdAt: string; updatedAt: string };
-type DetailData = { show: Detail; activities: Activity[]; producers: Producer[]; permissions: { canEditProduction: boolean; canCancel: boolean; canViewCommercial: boolean; canManageFinance: boolean } };
+type Detail = Item & {
+  address: string | null;
+  localContactName: string | null;
+  localContactPhone: string | null;
+  producerUserId: string | null;
+  soundcheckAt: string | null;
+  hotel: string | null;
+  transportation: string | null;
+  airport: string | null;
+  dressingRoom: string | null;
+  technicalInfo: string | null;
+  productionNotes: string | null;
+  riderFileName: string | null;
+  riderFileSize: number | null;
+  stageMapFileName: string | null;
+  stageMapFileSize: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type DetailData = {
+  show: Detail;
+  activities: Activity[];
+  producers: Producer[];
+  permissions: {
+    canEditProduction: boolean;
+    canCancel: boolean;
+    canViewCommercial: boolean;
+    canManageFinance: boolean;
+  };
+};
 
-const labels: Record<Status, string> = { CONFIRMED: "Confirmado", IN_PREPARATION: "Em preparação", COMPLETED: "Realizado", CANCELLED: "Cancelado" };
-const date = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString("pt-BR");
-const money = (value?: number | null) => value == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
-const bytes = (value: number | null) => value ? value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB` : "";
-async function fetchShows() { const response = await fetch("/api/shows"), data = await response.json() as { shows?: Item[]; error?: string }; return { response, data }; }
+const labels: Record<Status, string> = {
+  CONFIRMED: "Confirmado",
+  IN_PREPARATION: "Em preparação",
+  COMPLETED: "Realizado",
+  CANCELLED: "Cancelado",
+};
+const date = (value: string) =>
+  new Date(`${value}T12:00:00`).toLocaleDateString("pt-BR");
+const money = (value?: number | null) =>
+  value == null
+    ? "—"
+    : new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+      }).format(value / 100);
+const bytes = (value: number | null) =>
+  value
+    ? value < 1024 * 1024
+      ? `${Math.ceil(value / 1024)} KB`
+      : `${(value / 1024 / 1024).toFixed(1)} MB`
+    : "";
+async function fetchShows() {
+  const response = await fetch("/api/shows"),
+    data = (await response.json()) as { shows?: Item[]; error?: string };
+  return { response, data };
+}
 
 export function ShowsModule() {
-  const [items, setItems] = useState<Item[]>([]), [detail, setDetail] = useState<DetailData | null>(null), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { const { response, data } = await fetchShows(); if (response.ok) { setItems(data.shows || []); setMessage(""); } else setMessage(data.error || "Não foi possível carregar os shows."); }, []);
-  useEffect(() => { let mounted = true; fetchShows().then(({ response, data }) => { if (!mounted) return; if (response.ok) { setItems(data.shows || []); setMessage(""); } else setMessage(data.error || "Não foi possível carregar os shows."); }); return () => { mounted = false; }; }, []);
-  async function open(id: string) { const response = await fetch(`/api/shows/${id}`), data = await response.json() as DetailData & { error?: string }; if (response.ok) { setDetail(data); setMessage(""); } else setMessage(data.error || "Show não encontrado."); }
-  async function patch(body: Record<string, unknown>) { if (!detail) return; setBusy(true); setMessage(""); const response = await fetch(`/api/shows/${detail.show.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), data = await response.json() as { error?: string }; setBusy(false); if (!response.ok) { setMessage(data.error || "Não foi possível atualizar o show."); return; } await load(); await open(detail.show.id); }
-  async function upload(kind: "rider" | "stage-map", event: React.ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file || !detail) return; setBusy(true); setMessage(""); const form = new FormData(); form.set("file", file); const response = await fetch(`/api/shows/${detail.show.id}/files/${kind}`, { method: "POST", body: form }), data = await response.json() as { error?: string }; setBusy(false); event.target.value = ""; if (!response.ok) { setMessage(data.error || "Não foi possível enviar o documento."); return; } setMessage(kind === "rider" ? "Rider atualizado." : "Mapa de palco atualizado."); await open(detail.show.id); }
-  const groups = useMemo(() => ({ upcoming: items.filter(item => !["COMPLETED", "CANCELLED"].includes(item.status)), completed: items.filter(item => item.status === "COMPLETED"), cancelled: items.filter(item => item.status === "CANCELLED") }), [items]);
-  if (detail) return <><ShowDetail data={detail} patch={patch} upload={upload} back={() => { setDetail(null); load(); }} busy={busy} message={message} />{detail.permissions.canManageFinance && <ShowFinance showId={detail.show.id} />}</>;
-  return <section className="shows-module"><div className="page-heading"><div><p className="eyebrow">Shows</p><h1>Operação de eventos</h1><p>Eventos contratados que nasceram de oportunidades fechadas.</p></div></div>{message && <div className="calendar-alert">{message}</div>}<ShowGroup title="Próximos" subtitle="Confirmados e em preparação" items={groups.upcoming} open={open} /><ShowGroup title="Realizados" subtitle="Operações concluídas" items={groups.completed} open={open} /><ShowGroup title="Cancelados" subtitle="Histórico preservado" items={groups.cancelled} open={open} /></section>;
+  const [items, setItems] = useState<Item[]>([]),
+    [detail, setDetail] = useState<DetailData | null>(null),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const { response, data } = await fetchShows();
+    if (response.ok) {
+      setItems(data.shows || []);
+      setMessage("");
+    } else setMessage(data.error || "Não foi possível carregar os shows.");
+  }, []);
+  useEffect(() => {
+    let mounted = true;
+    fetchShows().then(({ response, data }) => {
+      if (!mounted) return;
+      if (response.ok) {
+        setItems(data.shows || []);
+        setMessage("");
+      } else setMessage(data.error || "Não foi possível carregar os shows.");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  async function open(id: string) {
+    const response = await fetch(`/api/shows/${id}`),
+      data = (await response.json()) as DetailData & { error?: string };
+    if (response.ok) {
+      setDetail(data);
+      setMessage("");
+    } else setMessage(data.error || "Show não encontrado.");
+  }
+  async function patch(body: Record<string, unknown>) {
+    if (!detail) return;
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/shows/${detail.show.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      data = (await response.json()) as { error?: string };
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(data.error || "Não foi possível atualizar o show.");
+      return;
+    }
+    await load();
+    await open(detail.show.id);
+  }
+  async function upload(
+    kind: "rider" | "stage-map",
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+    if (!file || !detail) return;
+    setBusy(true);
+    setMessage("");
+    const form = new FormData();
+    form.set("file", file);
+    const response = await fetch(`/api/shows/${detail.show.id}/files/${kind}`, {
+        method: "POST",
+        body: form,
+      }),
+      data = (await response.json()) as { error?: string };
+    setBusy(false);
+    event.target.value = "";
+    if (!response.ok) {
+      setMessage(data.error || "Não foi possível enviar o documento.");
+      return;
+    }
+    setMessage(
+      kind === "rider" ? "Rider atualizado." : "Mapa de palco atualizado.",
+    );
+    await open(detail.show.id);
+  }
+  const groups = useMemo(
+    () => ({
+      upcoming: items.filter(
+        (item) => !["COMPLETED", "CANCELLED"].includes(item.status),
+      ),
+      completed: items.filter((item) => item.status === "COMPLETED"),
+      cancelled: items.filter((item) => item.status === "CANCELLED"),
+    }),
+    [items],
+  );
+  if (detail)
+    return (
+      <>
+        <ShowDetail
+          data={detail}
+          patch={patch}
+          upload={upload}
+          back={() => {
+            setDetail(null);
+            load();
+          }}
+          busy={busy}
+          message={message}
+        />
+        {detail.permissions.canManageFinance && (
+          <ShowFinance showId={detail.show.id} />
+        )}
+      </>
+    );
+  return (
+    <section className="shows-module">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Shows</p>
+          <h1>Operação de eventos</h1>
+          <p>Eventos contratados que nasceram de oportunidades fechadas.</p>
+        </div>
+      </div>
+      {message && <div className="calendar-alert">{message}</div>}
+      <ShowGroup
+        title="Próximos"
+        subtitle="Confirmados e em preparação"
+        items={groups.upcoming}
+        open={open}
+      />
+      <ShowGroup
+        title="Realizados"
+        subtitle="Operações concluídas"
+        items={groups.completed}
+        open={open}
+      />
+      <ShowGroup
+        title="Cancelados"
+        subtitle="Histórico preservado"
+        items={groups.cancelled}
+        open={open}
+      />
+    </section>
+  );
 }
 
-function ShowGroup({ title, subtitle, items, open }: { title: string; subtitle: string; items: Item[]; open: (id: string) => void }) { return <section className="show-group"><div className="section-heading"><div><p className="eyebrow">{subtitle}</p><h2>{title}</h2></div><span className="count-badge">{items.length}</span></div><div className="show-cards">{items.map(item => <button className="show-card" key={item.id} onClick={() => open(item.id)}><div className="show-date"><b>{new Date(`${item.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b><span>{new Date(`${item.date}T12:00:00`).toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}</span></div><div className="show-card-main"><span className={`show-status status-${item.status.toLowerCase()}`}>{labels[item.status]}</span><h3>{item.eventName}</h3><p>{item.artistName}</p><div><span><MapPin />{item.venue || "Local a definir"} · {item.city}/{item.state}</span><span><UserRound />{item.producerName || "Produtor não atribuído"}</span></div></div><strong>{item.showTime || "—"}</strong></button>)}{!items.length && <div className="show-empty">Nenhum show nesta categoria.</div>}</div></section>; }
-
-function ShowDetail({ data, patch, upload, back, busy, message }: { data: DetailData; patch: (body: Record<string, unknown>) => Promise<void>; upload: (kind: "rider" | "stage-map", event: React.ChangeEvent<HTMLInputElement>) => Promise<void>; back: () => void; busy: boolean; message: string }) {
-  const show = data.show, [form, setForm] = useState(() => ({ eventName: show.eventName, showTime: show.showTime || "", venue: show.venue || "", city: show.city, state: show.state, address: show.address || "", localContactName: show.localContactName || "", localContactPhone: show.localContactPhone || "", producerUserId: show.producerUserId || "", soundcheckAt: show.soundcheckAt || "", hotel: show.hotel || "", transportation: show.transportation || "", airport: show.airport || "", dressingRoom: show.dressingRoom || "", technicalInfo: show.technicalInfo || "", productionNotes: show.productionNotes || "" }));
-  const field = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value })), editable = data.permissions.canEditProduction && !["COMPLETED", "CANCELLED"].includes(show.status);
-  return <section className="show-detail"><button className="back-button" onClick={back}><ArrowLeft />Voltar para shows</button><div className="show-detail-head"><div><p className="eyebrow">Evento contratado</p><h1>{show.eventName}</h1><p>{show.artistName} · {date(show.date)} · {show.city}/{show.state}</p></div><span className={`show-status status-${show.status.toLowerCase()}`}>{labels[show.status]}</span></div>{message && <div className={message.includes("atualizado") ? "notice" : "calendar-alert"}>{message}</div>}<div className="show-detail-grid"><div><form className="show-production-form" onSubmit={event => { event.preventDefault(); patch(form); }}><div className="section-heading"><div><p className="eyebrow">Produção</p><h2>Plano operacional</h2><p>Informações necessárias para preparar e executar o evento.</p></div>{editable && <button className="button button-primary" disabled={busy}><Save />Salvar produção</button>}</div><fieldset disabled={!editable}><div className="form-row"><label>Nome do evento<input value={form.eventName} onChange={event => field("eventName", event.target.value)} /></label><label>Horário do show<input type="time" value={form.showTime} onChange={event => field("showTime", event.target.value)} /></label></div><div className="form-row"><label>Local<input value={form.venue} onChange={event => field("venue", event.target.value)} /></label><label>Endereço<input value={form.address} onChange={event => field("address", event.target.value)} /></label></div><div className="form-row"><label>Cidade<input value={form.city} onChange={event => field("city", event.target.value)} /></label><label>Estado<input maxLength={2} value={form.state} onChange={event => field("state", event.target.value)} /></label></div><div className="form-row"><label>Contato local<input value={form.localContactName} onChange={event => field("localContactName", event.target.value)} /></label><label>Telefone do contato<input value={form.localContactPhone} onChange={event => field("localContactPhone", event.target.value)} /></label></div><div className="form-row"><label>Produtor responsável<select value={form.producerUserId} onChange={event => field("producerUserId", event.target.value)}><option value="">Não atribuído</option>{data.producers.map(producer => <option key={producer.id} value={producer.id}>{producer.name} · {producer.role}</option>)}</select></label><label>Passagem de som<input type="datetime-local" value={form.soundcheckAt} onChange={event => field("soundcheckAt", event.target.value)} /></label></div><OperationalField icon={<Hotel />} label="Hotel" value={form.hotel} set={value => field("hotel", value)} /><OperationalField icon={<Truck />} label="Transporte" value={form.transportation} set={value => field("transportation", value)} /><OperationalField icon={<Plane />} label="Aeroporto" value={form.airport} set={value => field("airport", value)} /><OperationalField icon={<UserRound />} label="Camarim" value={form.dressingRoom} set={value => field("dressingRoom", value)} /><OperationalField icon={<Wrench />} label="Informações técnicas" value={form.technicalInfo} set={value => field("technicalInfo", value)} rows={4} /><OperationalField icon={<CalendarCheck2 />} label="Observações da produção" value={form.productionNotes} set={value => field("productionNotes", value)} rows={4} /></fieldset></form><section className="show-documents"><div className="section-heading"><div><p className="eyebrow">Documentos técnicos</p><h2>Rider e mapa de palco</h2></div></div><div className="show-document-grid"><ShowDocument label="Rider técnico" kind="rider" fileName={show.riderFileName} fileSize={show.riderFileSize} showId={show.id} editable={editable} busy={busy} upload={upload} /><ShowDocument label="Mapa de palco" kind="stage-map" fileName={show.stageMapFileName} fileSize={show.stageMapFileSize} showId={show.id} editable={editable} busy={busy} upload={upload} /></div></section><section className="show-timeline"><p className="eyebrow">Histórico</p><h2>Atividades do show</h2>{data.activities.map(activity => <div key={activity.id}><i /><p>{activity.description}</p><small>{activity.authorName || "Sistema"} · {new Date(activity.createdAt.replace(" ", "T") + "Z").toLocaleString("pt-BR")}</small></div>)}</section></div><aside><section className="show-actions"><p className="eyebrow">Andamento</p><h2>Controle do evento</h2>{show.status === "CONFIRMED" && data.permissions.canEditProduction && <button className="button button-primary" onClick={() => patch({ status: "IN_PREPARATION" })}><Wrench />Iniciar preparação</button>}{show.status === "IN_PREPARATION" && data.permissions.canEditProduction && <button className="button button-primary" onClick={() => patch({ status: "COMPLETED" })}><Check />Marcar realizado</button>}{["CONFIRMED", "IN_PREPARATION"].includes(show.status) && data.permissions.canCancel && <button className="button button-secondary show-cancel" onClick={() => window.confirm("Cancelar este show? O histórico será preservado.") && patch({ status: "CANCELLED" })}><Ban />Cancelar show</button>}</section><section className="show-summary"><p className="eyebrow">Resumo</p><h2>{date(show.date)}</h2><dl><div><dt>Horário</dt><dd>{show.showTime || "A definir"}</dd></div><div><dt>Local</dt><dd>{show.venue || "A definir"}</dd></div><div><dt>Produtor</dt><dd>{show.producerName || "Não atribuído"}</dd></div>{data.permissions.canViewCommercial && <><div><dt>Contratante</dt><dd>{show.customerName || "—"}</dd></div><div><dt>Cachê</dt><dd>{money(show.fee)}</dd></div></>}</dl></section></aside></div></section>;
+function ShowGroup({
+  title,
+  subtitle,
+  items,
+  open,
+}: {
+  title: string;
+  subtitle: string;
+  items: Item[];
+  open: (id: string) => void;
+}) {
+  return (
+    <section className="show-group">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">{subtitle}</p>
+          <h2>{title}</h2>
+        </div>
+        <span className="count-badge">{items.length}</span>
+      </div>
+      <div className="show-cards">
+        {items.map((item) => (
+          <button
+            className="show-card"
+            key={item.id}
+            onClick={() => open(item.id)}
+          >
+            <div className="show-date">
+              <b>
+                {new Date(`${item.date}T12:00:00`)
+                  .getDate()
+                  .toString()
+                  .padStart(2, "0")}
+              </b>
+              <span>
+                {new Date(`${item.date}T12:00:00`)
+                  .toLocaleDateString("pt-BR", { month: "short" })
+                  .replace(".", "")}
+              </span>
+            </div>
+            <div className="show-card-main">
+              <span
+                className={`show-status status-${item.status.toLowerCase()}`}
+              >
+                {labels[item.status]}
+              </span>
+              <h3>{item.eventName}</h3>
+              <p>{item.artistName}</p>
+              <div>
+                <span>
+                  <MapPin />
+                  {item.venue || "Local a definir"} · {item.city}/{item.state}
+                </span>
+                <span>
+                  <UserRound />
+                  {item.producerName || "Produtor não atribuído"}
+                </span>
+              </div>
+            </div>
+            <strong>{item.showTime || "—"}</strong>
+          </button>
+        ))}
+        {!items.length && (
+          <div className="show-empty">Nenhum show nesta categoria.</div>
+        )}
+      </div>
+    </section>
+  );
 }
 
-function OperationalField({ icon, label, value, set, rows = 3 }: { icon: React.ReactNode; label: string; value: string; set: (value: string) => void; rows?: number }) { return <label className="operational-field"><span>{icon}{label}</span><textarea rows={rows} value={value} onChange={event => set(event.target.value)} /></label>; }
-function ShowDocument({ label, kind, fileName, fileSize, showId, editable, busy, upload }: { label: string; kind: "rider" | "stage-map"; fileName: string | null; fileSize: number | null; showId: string; editable: boolean; busy: boolean; upload: (kind: "rider" | "stage-map", event: React.ChangeEvent<HTMLInputElement>) => Promise<void> }) { return <article className="show-document"><FileUp /><div><b>{label}</b><span>{fileName || "Nenhum arquivo"}{fileSize ? ` · ${bytes(fileSize)}` : ""}</span></div>{fileName && <a className="button button-secondary" href={`/api/shows/${showId}/files/${kind}`}><Download />Baixar</a>}{editable && <label className="button button-primary"><Upload />{fileName ? "Substituir" : "Enviar"}<input type="file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" disabled={busy} onChange={event => upload(kind, event)} /></label>}</article>; }
+function ShowDetail({
+  data,
+  patch,
+  upload,
+  back,
+  busy,
+  message,
+}: {
+  data: DetailData;
+  patch: (body: Record<string, unknown>) => Promise<void>;
+  upload: (
+    kind: "rider" | "stage-map",
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => Promise<void>;
+  back: () => void;
+  busy: boolean;
+  message: string;
+}) {
+  const show = data.show,
+    [form, setForm] = useState(() => ({
+      eventName: show.eventName,
+      showTime: show.showTime || "",
+      venue: show.venue || "",
+      city: show.city,
+      state: show.state,
+      address: show.address || "",
+      localContactName: show.localContactName || "",
+      localContactPhone: show.localContactPhone || "",
+      producerUserId: show.producerUserId || "",
+      soundcheckAt: show.soundcheckAt || "",
+      hotel: show.hotel || "",
+      transportation: show.transportation || "",
+      airport: show.airport || "",
+      dressingRoom: show.dressingRoom || "",
+      technicalInfo: show.technicalInfo || "",
+      productionNotes: show.productionNotes || "",
+    }));
+  const field = (key: keyof typeof form, value: string) =>
+      setForm((current) => ({ ...current, [key]: value })),
+    editable =
+      data.permissions.canEditProduction &&
+      !["COMPLETED", "CANCELLED"].includes(show.status);
+  return (
+    <section className="show-detail">
+      <button className="back-button" onClick={back}>
+        <ArrowLeft />
+        Voltar para shows
+      </button>
+      <div className="show-detail-head">
+        <div>
+          <p className="eyebrow">Evento contratado</p>
+          <h1>{show.eventName}</h1>
+          <p>
+            {show.artistName} · {date(show.date)} · {show.city}/{show.state}
+          </p>
+        </div>
+        <span className={`show-status status-${show.status.toLowerCase()}`}>
+          {labels[show.status]}
+        </span>
+      </div>
+      {message && (
+        <div
+          className={
+            message.includes("atualizado") ? "notice" : "calendar-alert"
+          }
+        >
+          {message}
+        </div>
+      )}
+      <div className="show-detail-grid">
+        <div>
+          <form
+            className="show-production-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              patch(form);
+            }}
+          >
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Produção</p>
+                <h2>Plano operacional</h2>
+                <p>
+                  Informações necessárias para preparar e executar o evento.
+                </p>
+              </div>
+              {editable && (
+                <button className="button button-primary" disabled={busy}>
+                  <Save />
+                  Salvar produção
+                </button>
+              )}
+            </div>
+            <fieldset disabled={!editable}>
+              <div className="form-row">
+                <label>
+                  Nome do evento
+                  <input
+                    value={form.eventName}
+                    onChange={(event) => field("eventName", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Horário do show
+                  <input
+                    type="time"
+                    value={form.showTime}
+                    onChange={(event) => field("showTime", event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Local
+                  <input
+                    value={form.venue}
+                    onChange={(event) => field("venue", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Endereço
+                  <input
+                    value={form.address}
+                    onChange={(event) => field("address", event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Cidade
+                  <input
+                    value={form.city}
+                    onChange={(event) => field("city", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Estado
+                  <input
+                    maxLength={2}
+                    value={form.state}
+                    onChange={(event) => field("state", event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Contato local
+                  <input
+                    value={form.localContactName}
+                    onChange={(event) =>
+                      field("localContactName", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Telefone do contato
+                  <input
+                    value={form.localContactPhone}
+                    onChange={(event) =>
+                      field("localContactPhone", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Produtor responsável
+                  <select
+                    value={form.producerUserId}
+                    onChange={(event) =>
+                      field("producerUserId", event.target.value)
+                    }
+                  >
+                    <option value="">Não atribuído</option>
+                    {data.producers.map((producer) => (
+                      <option key={producer.id} value={producer.id}>
+                        {producer.name} · {producer.role}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Passagem de som
+                  <input
+                    type="datetime-local"
+                    value={form.soundcheckAt}
+                    onChange={(event) =>
+                      field("soundcheckAt", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+              <OperationalField
+                icon={<Hotel />}
+                label="Hotel"
+                value={form.hotel}
+                set={(value) => field("hotel", value)}
+              />
+              <OperationalField
+                icon={<Truck />}
+                label="Transporte"
+                value={form.transportation}
+                set={(value) => field("transportation", value)}
+              />
+              <OperationalField
+                icon={<Plane />}
+                label="Aeroporto"
+                value={form.airport}
+                set={(value) => field("airport", value)}
+              />
+              <OperationalField
+                icon={<UserRound />}
+                label="Camarim"
+                value={form.dressingRoom}
+                set={(value) => field("dressingRoom", value)}
+              />
+              <OperationalField
+                icon={<Wrench />}
+                label="Informações técnicas"
+                value={form.technicalInfo}
+                set={(value) => field("technicalInfo", value)}
+                rows={4}
+              />
+              <OperationalField
+                icon={<CalendarCheck2 />}
+                label="Observações da produção"
+                value={form.productionNotes}
+                set={(value) => field("productionNotes", value)}
+                rows={4}
+              />
+            </fieldset>
+          </form>
+          <section className="show-documents">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Documentos técnicos</p>
+                <h2>Rider e mapa de palco</h2>
+              </div>
+            </div>
+            <div className="show-document-grid">
+              <ShowDocument
+                label="Rider técnico"
+                kind="rider"
+                fileName={show.riderFileName}
+                fileSize={show.riderFileSize}
+                showId={show.id}
+                editable={editable}
+                busy={busy}
+                upload={upload}
+              />
+              <ShowDocument
+                label="Mapa de palco"
+                kind="stage-map"
+                fileName={show.stageMapFileName}
+                fileSize={show.stageMapFileSize}
+                showId={show.id}
+                editable={editable}
+                busy={busy}
+                upload={upload}
+              />
+            </div>
+          </section>
+          <section className="show-timeline">
+            <p className="eyebrow">Histórico</p>
+            <h2>Atividades do show</h2>
+            {data.activities.map((activity) => (
+              <div key={activity.id}>
+                <i />
+                <p>{activity.description}</p>
+                <small>
+                  {activity.authorName || "Sistema"} ·{" "}
+                  {new Date(
+                    activity.createdAt.replace(" ", "T") + "Z",
+                  ).toLocaleString("pt-BR")}
+                </small>
+              </div>
+            ))}
+          </section>
+        </div>
+        <aside>
+          <section className="show-actions">
+            <p className="eyebrow">Andamento</p>
+            <h2>Controle do evento</h2>
+            {show.status === "CONFIRMED" &&
+              data.permissions.canEditProduction && (
+                <button
+                  className="button button-primary"
+                  onClick={() => patch({ status: "IN_PREPARATION" })}
+                >
+                  <Wrench />
+                  Iniciar preparação
+                </button>
+              )}
+            {show.status === "IN_PREPARATION" &&
+              data.permissions.canEditProduction && (
+                <button
+                  className="button button-primary"
+                  onClick={() => patch({ status: "COMPLETED" })}
+                >
+                  <Check />
+                  Marcar realizado
+                </button>
+              )}
+            {["CONFIRMED", "IN_PREPARATION"].includes(show.status) &&
+              data.permissions.canCancel && (
+                <button
+                  className="button button-secondary show-cancel"
+                  onClick={() =>
+                    window.confirm(
+                      "Cancelar este show? O histórico será preservado.",
+                    ) && patch({ status: "CANCELLED" })
+                  }
+                >
+                  <Ban />
+                  Cancelar show
+                </button>
+              )}
+          </section>
+          <section className="show-summary">
+            <p className="eyebrow">Resumo</p>
+            <h2>{date(show.date)}</h2>
+            <dl>
+              <div>
+                <dt>Horário</dt>
+                <dd>{show.showTime || "A definir"}</dd>
+              </div>
+              <div>
+                <dt>Local</dt>
+                <dd>{show.venue || "A definir"}</dd>
+              </div>
+              <div>
+                <dt>Produtor</dt>
+                <dd>{show.producerName || "Não atribuído"}</dd>
+              </div>
+              {data.permissions.canViewCommercial && (
+                <>
+                  <div>
+                    <dt>Contratante</dt>
+                    <dd>{show.customerName || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>Cachê</dt>
+                    <dd>{money(show.fee)}</dd>
+                  </div>
+                </>
+              )}
+            </dl>
+          </section>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function OperationalField({
+  icon,
+  label,
+  value,
+  set,
+  rows = 3,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  set: (value: string) => void;
+  rows?: number;
+}) {
+  return (
+    <label className="operational-field">
+      <span>
+        {icon}
+        {label}
+      </span>
+      <textarea
+        rows={rows}
+        value={value}
+        onChange={(event) => set(event.target.value)}
+      />
+    </label>
+  );
+}
+function ShowDocument({
+  label,
+  kind,
+  fileName,
+  fileSize,
+  showId,
+  editable,
+  busy,
+  upload,
+}: {
+  label: string;
+  kind: "rider" | "stage-map";
+  fileName: string | null;
+  fileSize: number | null;
+  showId: string;
+  editable: boolean;
+  busy: boolean;
+  upload: (
+    kind: "rider" | "stage-map",
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => Promise<void>;
+}) {
+  return (
+    <article className="show-document">
+      <FileUp />
+      <div>
+        <b>{label}</b>
+        <span>
+          {fileName || "Nenhum arquivo"}
+          {fileSize ? ` · ${bytes(fileSize)}` : ""}
+        </span>
+      </div>
+      {fileName && (
+        <a
+          className="button button-secondary"
+          href={`/api/shows/${showId}/files/${kind}`}
+        >
+          <Download />
+          Baixar
+        </a>
+      )}
+      {editable && (
+        <label className="button button-primary">
+          <Upload />
+          {fileName ? "Substituir" : "Enviar"}
+          <input
+            type="file"
+            accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
+            disabled={busy}
+            onChange={(event) => upload(kind, event)}
+          />
+        </label>
+      )}
+    </article>
+  );
+}

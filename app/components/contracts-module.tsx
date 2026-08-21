@@ -1,31 +1,823 @@
 "use client";
-import { ArrowLeft, Ban, Check, Download, Eye, FileCheck2, FileText, Plus, Search, Send, Upload, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Ban,
+  Check,
+  Download,
+  Eye,
+  FileCheck2,
+  FileText,
+  Plus,
+  Save,
+  Search,
+  Send,
+  Upload,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import {
+  ContractTemplatesPanel,
+  type ContractTemplate,
+} from "@/app/components/contract-templates-panel";
 
 type Status = "DRAFT" | "SENT" | "SIGNED" | "CANCELLED";
-type ContractItem = { id: string; contractNumber: string; status: Status; fileName: string | null; fileSize: number | null; sentAt: string | null; signedAt: string | null; updatedAt: string; opportunityId: string; eventDate: string; customerName: string; artistName: string; showId: string | null };
-type Opportunity = { id: string; eventDate: string; stage: string; customerName: string; artistName: string; showId: string | null };
-type Activity = { id: string; type: string; description: string; fromValue: string | null; toValue: string | null; createdAt: string; authorName: string };
-type ContractDetail = { id: string; contractNumber: string; status: Status; fileName: string | null; fileType: string | null; fileSize: number | null; fileUploadedAt: string | null; sentAt: string | null; signedAt: string | null; notes: string | null; createdAt: string; updatedAt: string; opportunityId: string; eventDate: string; city: string; state: string; venue: string | null; customerName: string; companyName: string | null; artistName: string; showId: string | null; createdByName: string };
+type ContractItem = {
+  id: string;
+  contractNumber: string;
+  status: Status;
+  fileName: string | null;
+  fileSize: number | null;
+  sentAt: string | null;
+  signedAt: string | null;
+  updatedAt: string;
+  opportunityId: string;
+  eventDate: string;
+  customerName: string;
+  artistName: string;
+  showId: string | null;
+};
+type Opportunity = {
+  id: string;
+  eventDate: string;
+  stage: string;
+  customerName: string;
+  artistName: string;
+  showId: string | null;
+};
+type Activity = {
+  id: string;
+  type: string;
+  description: string;
+  fromValue: string | null;
+  toValue: string | null;
+  createdAt: string;
+  authorName: string;
+};
+type ContractDetail = {
+  id: string;
+  contractNumber: string;
+  status: Status;
+  fileName: string | null;
+  fileType: string | null;
+  fileSize: number | null;
+  fileUploadedAt: string | null;
+  sentAt: string | null;
+  signedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  opportunityId: string;
+  eventDate: string;
+  city: string;
+  state: string;
+  venue: string | null;
+  customerName: string;
+  companyName: string | null;
+  artistName: string;
+  showId: string | null;
+  createdByName: string;
+  templateId: string | null;
+  templateName: string | null;
+  templateVersion: number | null;
+  fieldValues: Record<string, string>;
+  generatedAt: string | null;
+};
+type FieldDefinition = { key: string; label: string; max: number };
+type ContractDetailResponse = {
+  contract: ContractDetail;
+  activities: Activity[];
+  fieldDefinitions: FieldDefinition[];
+  renderedDocument: string | null;
+  canEditFields: boolean;
+  canGenerate: boolean;
+  canManageStatus: boolean;
+};
 
-const labels: Record<Status, string> = { DRAFT: "Rascunho", SENT: "Enviado", SIGNED: "Assinado", CANCELLED: "Cancelado" };
-const date = (value: string | null) => value ? new Date(value.length === 10 ? `${value}T12:00:00` : value.replace(" ", "T") + (value.includes("Z") ? "" : "Z")).toLocaleDateString("pt-BR") : "—";
-const bytes = (value: number | null) => value ? value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB` : "";
+const labels: Record<Status, string> = {
+  DRAFT: "Rascunho",
+  SENT: "Enviado",
+  SIGNED: "Assinado",
+  CANCELLED: "Cancelado",
+};
+const date = (value: string | null) =>
+  value
+    ? new Date(
+        value.length === 10
+          ? `${value}T12:00:00`
+          : value.replace(" ", "T") + (value.includes("Z") ? "" : "Z"),
+      ).toLocaleDateString("pt-BR")
+    : "—";
+const bytes = (value: number | null) =>
+  value
+    ? value < 1024 * 1024
+      ? `${Math.ceil(value / 1024)} KB`
+      : `${(value / 1024 / 1024).toFixed(1)} MB`
+    : "";
 
 export function ContractsModule() {
-  const [items, setItems] = useState<ContractItem[]>([]), [opportunities, setOpportunities] = useState<Opportunity[]>([]), [detail, setDetail] = useState<{ contract: ContractDetail; activities: Activity[] } | null>(null);
-  const [q, setQ] = useState(""), [status, setStatus] = useState(""), [creating, setCreating] = useState(false), [opportunityId, setOpportunityId] = useState(""), [notes, setNotes] = useState(""), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { const params = new URLSearchParams(); if (q) params.set("q", q); if (status) params.set("status", status); const response = await fetch(`/api/contracts?${params}`), data = await response.json() as { contracts?: ContractItem[]; opportunities?: Opportunity[]; error?: string }; if (response.ok) { setItems(data.contracts || []); setOpportunities(data.opportunities || []); setMessage(""); } else setMessage(data.error || "Não foi possível carregar os contratos."); }, [q, status]);
-  useEffect(() => { const timer = setTimeout(load, 180); return () => clearTimeout(timer); }, [load]);
-  async function open(id: string) { const response = await fetch(`/api/contracts/${id}`), data = await response.json() as { contract?: ContractDetail; activities?: Activity[]; error?: string }; if (response.ok && data.contract) { setDetail({ contract: data.contract, activities: data.activities || [] }); setNotes(data.contract.notes || ""); setCreating(false); setMessage(""); } else setMessage(data.error || "Contrato não encontrado."); }
-  async function create(event: React.FormEvent) { event.preventDefault(); setBusy(true); const response = await fetch("/api/contracts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ opportunityId, notes }) }), data = await response.json() as { id?: string; error?: string }; setBusy(false); if (!response.ok || !data.id) { setMessage(data.error || "Não foi possível criar o contrato."); return; } setCreating(false); setOpportunityId(""); setNotes(""); await load(); await open(data.id); }
-  async function patch(body: Record<string, unknown>) { if (!detail) return; setBusy(true); setMessage(""); const response = await fetch(`/api/contracts/${detail.contract.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), data = await response.json() as { error?: string }; setBusy(false); if (!response.ok) { setMessage(data.error || "Não foi possível atualizar o contrato."); return; } await load(); await open(detail.contract.id); }
-  async function upload(event: React.ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file || !detail) return; if (detail.contract.fileName && !window.confirm("Substituir o arquivo atual deste rascunho?")) { event.target.value = ""; return; } setBusy(true); setMessage(""); const form = new FormData(); form.set("file", file); const response = await fetch(`/api/contracts/${detail.contract.id}/file`, { method: "POST", body: form }), data = await response.json() as { error?: string }; setBusy(false); event.target.value = ""; if (!response.ok) { setMessage(data.error || "Não foi possível enviar o arquivo."); return; } setMessage(detail.contract.fileName ? "Arquivo substituído com segurança." : "Arquivo enviado."); await load(); await open(detail.contract.id); }
-  if (detail) return <ContractView data={detail} notes={notes} setNotes={setNotes} back={() => { setDetail(null); load(); }} patch={patch} upload={upload} busy={busy} message={message} />;
-  return <section className="contracts-module"><div className="page-heading contracts-heading"><div><p className="eyebrow">Contratos</p><h1>Controle documental</h1><p>Acompanhe contratos privados relacionados às oportunidades e shows.</p></div><button className="button button-primary" onClick={() => { setCreating(true); setMessage(""); }}><Plus />Criar contrato</button></div>{message && <div className="calendar-alert">{message}</div>}{creating && <form className="contract-create-card" onSubmit={create}><div className="section-heading"><div><p className="eyebrow">Novo registro</p><h2>Criar contrato</h2><p>Os dados de cliente, artista e show serão herdados da oportunidade.</p></div><button type="button" className="icon-close" aria-label="Fechar" onClick={() => setCreating(false)}><X /></button></div><label>Oportunidade<select required value={opportunityId} onChange={event => setOpportunityId(event.target.value)}><option value="">Selecione a oportunidade</option>{opportunities.map(item => <option value={item.id} key={item.id}>{item.customerName} · {item.artistName} · {date(item.eventDate)}{item.showId ? " · Show preparado" : ""}</option>)}</select></label><label>Observações internas<textarea rows={3} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Condições, pendências ou orientações sobre o documento" /></label><div className="form-actions"><button type="button" className="button button-secondary" onClick={() => setCreating(false)}>Cancelar</button><button className="button button-primary" disabled={busy}>{busy ? "Criando..." : "Criar rascunho"}</button></div></form>}<div className="contracts-toolbar"><label className="crm-search"><Search /><span className="sr-only">Buscar contratos</span><input placeholder="Buscar número, cliente ou artista" value={q} onChange={event => setQ(event.target.value)} /></label><label><span className="sr-only">Filtrar por status</span><select value={status} onChange={event => setStatus(event.target.value)}><option value="">Todos os status</option><option value="DRAFT">Rascunhos</option><option value="SENT">Enviados</option><option value="SIGNED">Assinados</option><option value="CANCELLED">Cancelados</option></select></label><span className="count-badge">{items.length} contratos</span></div><div className="contracts-table"><div className="contracts-table-head"><span>Contrato</span><span>Cliente e artista</span><span>Evento</span><span>Arquivo</span><span>Status</span><span /></div>{items.map(item => <button className="contract-row" key={item.id} onClick={() => open(item.id)}><span><FileText /><b>{item.contractNumber}</b><small>{item.showId ? "Vinculado ao show" : "Vinculado à oportunidade"}</small></span><span><b>{item.customerName}</b><small>{item.artistName}</small></span><span>{date(item.eventDate)}</span><span>{item.fileName || "Aguardando upload"}<small>{bytes(item.fileSize)}</small></span><em className={`contract-status status-${item.status.toLowerCase()}`}>{labels[item.status]}</em><Eye /></button>)}{!items.length && <div className="table-empty">Nenhum contrato encontrado.</div>}</div></section>;
+  const [items, setItems] = useState<ContractItem[]>([]),
+    [opportunities, setOpportunities] = useState<Opportunity[]>([]),
+    [templates, setTemplates] = useState<ContractTemplate[]>([]),
+    [detail, setDetail] = useState<ContractDetailResponse | null>(null);
+  const [q, setQ] = useState(""),
+    [status, setStatus] = useState(""),
+    [creating, setCreating] = useState(false),
+    [managingTemplates, setManagingTemplates] = useState(false),
+    [opportunityId, setOpportunityId] = useState(""),
+    [templateId, setTemplateId] = useState(""),
+    [notes, setNotes] = useState(""),
+    [fieldValues, setFieldValues] = useState<Record<string, string>>({}),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (status) params.set("status", status);
+    const response = await fetch(`/api/contracts?${params}`),
+      data = (await response.json()) as {
+        contracts?: ContractItem[];
+        opportunities?: Opportunity[];
+        error?: string;
+      };
+    if (response.ok) {
+      setItems(data.contracts || []);
+      setOpportunities(data.opportunities || []);
+      setMessage("");
+    } else setMessage(data.error || "Não foi possível carregar os contratos.");
+  }, [q, status]);
+  useEffect(() => {
+    const timer = setTimeout(load, 180);
+    return () => clearTimeout(timer);
+  }, [load]);
+  const loadTemplates = useCallback(async () => {
+    const response = await fetch("/api/contract-templates"),
+      data = (await response.json()) as {
+        templates?: ContractTemplate[];
+      };
+    if (response.ok) {
+      const next = data.templates || [];
+      setTemplates(next);
+      setTemplateId(
+        (current) =>
+          current ||
+          next.find((item) => item.isDefault)?.id ||
+          next[0]?.id ||
+          "",
+      );
+    }
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => void loadTemplates(), 0);
+    return () => clearTimeout(timer);
+  }, [loadTemplates]);
+  async function open(id: string) {
+    const response = await fetch(`/api/contracts/${id}`),
+      data = (await response.json()) as {
+        contract?: ContractDetail;
+        activities?: Activity[];
+        fieldDefinitions?: FieldDefinition[];
+        renderedDocument?: string | null;
+        canEditFields?: boolean;
+        canGenerate?: boolean;
+        canManageStatus?: boolean;
+        error?: string;
+      };
+    if (response.ok && data.contract) {
+      setDetail({
+        contract: data.contract,
+        activities: data.activities || [],
+        fieldDefinitions: data.fieldDefinitions || [],
+        renderedDocument: data.renderedDocument || null,
+        canEditFields: Boolean(data.canEditFields),
+        canGenerate: Boolean(data.canGenerate),
+        canManageStatus: Boolean(data.canManageStatus),
+      });
+      setNotes(data.contract.notes || "");
+      setFieldValues(data.contract.fieldValues || {});
+      setCreating(false);
+      setMessage("");
+    } else setMessage(data.error || "Contrato não encontrado.");
+  }
+  async function create(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    const response = await fetch("/api/contracts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ opportunityId, templateId, notes }),
+      }),
+      data = (await response.json()) as { id?: string; error?: string };
+    setBusy(false);
+    if (!response.ok || !data.id) {
+      setMessage(data.error || "Não foi possível criar o contrato.");
+      return;
+    }
+    setCreating(false);
+    setOpportunityId("");
+    setNotes("");
+    await load();
+    await open(data.id);
+  }
+  async function generatePdf() {
+    if (!detail) return;
+    setBusy(true);
+    const response = await fetch(
+        `/api/contracts/${detail.contract.id}/generate`,
+        {
+          method: "POST",
+        },
+      ),
+      data = (await response.json()) as { error?: string };
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(data.error || "Não foi possível gerar o PDF.");
+      return;
+    }
+    setMessage("PDF gerado a partir do modelo protegido.");
+    await load();
+    await open(detail.contract.id);
+  }
+  async function patch(body: Record<string, unknown>) {
+    if (!detail) return;
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/contracts/${detail.contract.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      data = (await response.json()) as { error?: string };
+    setBusy(false);
+    if (!response.ok) {
+      setMessage(data.error || "Não foi possível atualizar o contrato.");
+      return;
+    }
+    await load();
+    await open(detail.contract.id);
+  }
+  async function upload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !detail) return;
+    if (
+      detail.contract.fileName &&
+      !window.confirm("Substituir o arquivo atual deste rascunho?")
+    ) {
+      event.target.value = "";
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    const form = new FormData();
+    form.set("file", file);
+    const response = await fetch(`/api/contracts/${detail.contract.id}/file`, {
+        method: "POST",
+        body: form,
+      }),
+      data = (await response.json()) as { error?: string };
+    setBusy(false);
+    event.target.value = "";
+    if (!response.ok) {
+      setMessage(data.error || "Não foi possível enviar o arquivo.");
+      return;
+    }
+    setMessage(
+      detail.contract.fileName
+        ? "Arquivo substituído com segurança."
+        : "Arquivo enviado.",
+    );
+    await load();
+    await open(detail.contract.id);
+  }
+  if (detail)
+    return (
+      <ContractView
+        data={detail}
+        notes={notes}
+        setNotes={setNotes}
+        back={() => {
+          setDetail(null);
+          load();
+        }}
+        patch={patch}
+        upload={upload}
+        busy={busy}
+        message={message}
+        fieldValues={fieldValues}
+        setFieldValues={setFieldValues}
+        generatePdf={generatePdf}
+      />
+    );
+  if (managingTemplates)
+    return (
+      <ContractTemplatesPanel
+        back={() => setManagingTemplates(false)}
+        onChanged={loadTemplates}
+      />
+    );
+  return (
+    <section className="contracts-module">
+      <div className="page-heading contracts-heading">
+        <div>
+          <p className="eyebrow">Contratos</p>
+          <h1>Controle documental</h1>
+          <p>
+            Acompanhe contratos privados relacionados às oportunidades e shows.
+          </p>
+        </div>
+        <div className="contract-heading-actions">
+          <button
+            className="button button-secondary"
+            onClick={() => setManagingTemplates(true)}
+          >
+            <FileText />
+            Modelos
+          </button>
+          <button
+            className="button button-primary"
+            onClick={() => {
+              setCreating(true);
+              setMessage("");
+            }}
+          >
+            <Plus />
+            Criar contrato
+          </button>
+        </div>
+      </div>
+      {message && <div className="calendar-alert">{message}</div>}
+      {creating && (
+        <form className="contract-create-card" onSubmit={create}>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Novo registro</p>
+              <h2>Criar contrato</h2>
+              <p>
+                Os dados de cliente, artista e show serão herdados da
+                oportunidade.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="icon-close"
+              aria-label="Fechar"
+              onClick={() => setCreating(false)}
+            >
+              <X />
+            </button>
+          </div>
+          <label>
+            Oportunidade
+            <select
+              required
+              value={opportunityId}
+              onChange={(event) => setOpportunityId(event.target.value)}
+            >
+              <option value="">Selecione a oportunidade</option>
+              {opportunities.map((item) => (
+                <option value={item.id} key={item.id}>
+                  {item.customerName} · {item.artistName} ·{" "}
+                  {date(item.eventDate)}
+                  {item.showId ? " · Show preparado" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Modelo
+            <select
+              required
+              value={templateId}
+              onChange={(event) => setTemplateId(event.target.value)}
+            >
+              <option value="">Selecione o modelo</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name} · versão {template.version}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!templates.length && (
+            <div className="calendar-alert">
+              Cadastre um modelo antes de criar o contrato editável.
+            </div>
+          )}
+          <label>
+            Observações internas
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Condições, pendências ou orientações sobre o documento"
+            />
+          </label>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setCreating(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              className="button button-primary"
+              disabled={busy || !templateId}
+            >
+              {busy ? "Criando..." : "Criar rascunho"}
+            </button>
+          </div>
+        </form>
+      )}
+      <div className="contracts-toolbar">
+        <label className="crm-search">
+          <Search />
+          <span className="sr-only">Buscar contratos</span>
+          <input
+            placeholder="Buscar número, cliente ou artista"
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+          />
+        </label>
+        <label>
+          <span className="sr-only">Filtrar por status</span>
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="">Todos os status</option>
+            <option value="DRAFT">Rascunhos</option>
+            <option value="SENT">Enviados</option>
+            <option value="SIGNED">Assinados</option>
+            <option value="CANCELLED">Cancelados</option>
+          </select>
+        </label>
+        <span className="count-badge">{items.length} contratos</span>
+      </div>
+      <div className="contracts-table">
+        <div className="contracts-table-head">
+          <span>Contrato</span>
+          <span>Cliente e artista</span>
+          <span>Evento</span>
+          <span>Arquivo</span>
+          <span>Status</span>
+          <span />
+        </div>
+        {items.map((item) => (
+          <button
+            className="contract-row"
+            key={item.id}
+            onClick={() => open(item.id)}
+          >
+            <span>
+              <FileText />
+              <b>{item.contractNumber}</b>
+              <small>
+                {item.showId ? "Vinculado ao show" : "Vinculado à oportunidade"}
+              </small>
+            </span>
+            <span>
+              <b>{item.customerName}</b>
+              <small>{item.artistName}</small>
+            </span>
+            <span>{date(item.eventDate)}</span>
+            <span>
+              {item.fileName || "Aguardando upload"}
+              <small>{bytes(item.fileSize)}</small>
+            </span>
+            <em
+              className={`contract-status status-${item.status.toLowerCase()}`}
+            >
+              {labels[item.status]}
+            </em>
+            <Eye />
+          </button>
+        ))}
+        {!items.length && (
+          <div className="table-empty">Nenhum contrato encontrado.</div>
+        )}
+      </div>
+    </section>
+  );
 }
 
-function ContractView({ data, notes, setNotes, back, patch, upload, busy, message }: { data: { contract: ContractDetail; activities: Activity[] }; notes: string; setNotes: (value: string) => void; back: () => void; patch: (body: Record<string, unknown>) => Promise<void>; upload: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>; busy: boolean; message: string }) {
-  const contract = data.contract, editable = contract.status === "DRAFT";
-  return <section className="contract-detail"><button className="back-button" onClick={back}><ArrowLeft />Voltar para contratos</button><div className="contract-detail-head"><div><p className="eyebrow">Contrato privado</p><h1>{contract.contractNumber}</h1><p>{contract.customerName} · {contract.artistName}</p></div><em className={`contract-status status-${contract.status.toLowerCase()}`}>{labels[contract.status]}</em></div>{message && <div className={message.includes("enviado") || message.includes("substituído") ? "notice" : "calendar-alert"}>{message}</div>}<div className="contract-detail-grid"><div><article className="contract-file-card"><div className="contract-file-icon"><FileCheck2 /></div><div className="contract-file-info"><p className="eyebrow">Documento</p>{contract.fileName ? <><h2>{contract.fileName}</h2><small>PDF · {bytes(contract.fileSize)} · enviado em {date(contract.fileUploadedAt)}</small></> : <><h2>Nenhum arquivo enviado</h2><small>Envie o contrato em PDF, com até 10 MB.</small></>}</div><div className="contract-file-actions">{contract.fileName && <><a className="button button-secondary" href={`/api/contracts/${contract.id}/file?view=1`} target="_blank" rel="noreferrer"><Eye />Visualizar</a><a className="button button-secondary" href={`/api/contracts/${contract.id}/file`}><Download />Baixar</a></>} {editable && <label className="button button-primary contract-upload"><Upload />{contract.fileName ? "Substituir PDF" : "Enviar PDF"}<input type="file" accept="application/pdf,.pdf" onChange={upload} disabled={busy} /></label>}</div></article><article className="contract-notes"><div className="section-heading"><div><p className="eyebrow">Controle interno</p><h2>Observações</h2></div></div><textarea rows={5} value={notes} onChange={event => setNotes(event.target.value)} disabled={!editable} placeholder="Nenhuma observação registrada." />{editable && <button className="button button-secondary" onClick={() => patch({ notes })} disabled={busy}>Salvar observações</button>}</article><article className="contract-timeline"><p className="eyebrow">Histórico</p><h2>Alterações do contrato</h2>{data.activities.map(activity => <div key={activity.id}><i /><p>{activity.description}</p><small>{activity.authorName} · {new Date(activity.createdAt.replace(" ", "T") + "Z").toLocaleString("pt-BR")}</small></div>)}</article></div><aside><article className="contract-actions-card"><p className="eyebrow">Status</p><h2>Próxima etapa</h2>{contract.status === "DRAFT" && <><button className="button button-primary" disabled={busy || !contract.fileName} onClick={() => patch({ status: "SENT" })}><Send />Marcar como enviado</button>{!contract.fileName && <small>Envie o PDF antes de avançar.</small>}</>}{contract.status === "SENT" && <button className="button button-primary" disabled={busy} onClick={() => patch({ status: "SIGNED" })}><Check />Marcar como assinado</button>}{["DRAFT", "SENT"].includes(contract.status) && <button className="button button-secondary contract-cancel" disabled={busy} onClick={() => window.confirm("Cancelar este contrato? Esta ação não poderá ser desfeita.") && patch({ status: "CANCELLED" })}><Ban />Cancelar contrato</button>}{contract.status === "SIGNED" && <p className="contract-terminal"><Check />Contrato assinado em {date(contract.signedAt)}.</p>}{contract.status === "CANCELLED" && <p className="contract-terminal cancelled"><Ban />Contrato cancelado.</p>}</article><article className="contract-summary"><p className="eyebrow">Relacionamentos</p><h2>{date(contract.eventDate)}</h2><dl><div><dt>Cliente</dt><dd>{contract.customerName}</dd></div><div><dt>Artista</dt><dd>{contract.artistName}</dd></div><div><dt>Local</dt><dd>{contract.venue || "A definir"}</dd></div><div><dt>Cidade</dt><dd>{contract.city} · {contract.state}</dd></div><div><dt>Show</dt><dd>{contract.showId ? "Vinculado" : "Ainda não criado"}</dd></div><div><dt>Criado por</dt><dd>{contract.createdByName}</dd></div></dl></article></aside></div></section>;
+function ContractView({
+  data,
+  notes,
+  setNotes,
+  back,
+  patch,
+  upload,
+  busy,
+  message,
+  fieldValues,
+  setFieldValues,
+  generatePdf,
+}: {
+  data: ContractDetailResponse;
+  notes: string;
+  setNotes: (value: string) => void;
+  back: () => void;
+  patch: (body: Record<string, unknown>) => Promise<void>;
+  upload: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
+  busy: boolean;
+  message: string;
+  fieldValues: Record<string, string>;
+  setFieldValues: (value: Record<string, string>) => void;
+  generatePdf: () => Promise<void>;
+}) {
+  const contract = data.contract,
+    editable = contract.status === "DRAFT";
+  return (
+    <section className="contract-detail">
+      <button className="back-button" onClick={back}>
+        <ArrowLeft />
+        Voltar para contratos
+      </button>
+      <div className="contract-detail-head">
+        <div>
+          <p className="eyebrow">Contrato privado</p>
+          <h1>{contract.contractNumber}</h1>
+          <p>
+            {contract.customerName} · {contract.artistName}
+          </p>
+        </div>
+        <em
+          className={`contract-status status-${contract.status.toLowerCase()}`}
+        >
+          {labels[contract.status]}
+        </em>
+      </div>
+      {message && (
+        <div
+          className={
+            message.includes("enviado") || message.includes("substituído")
+              ? "notice"
+              : "calendar-alert"
+          }
+        >
+          {message}
+        </div>
+      )}
+      <div className="contract-detail-grid">
+        <div>
+          {contract.templateId && (
+            <article className="contract-fields-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Informações editáveis</p>
+                  <h2>{contract.templateName}</h2>
+                  <small>
+                    Modelo protegido · versão {contract.templateVersion}
+                  </small>
+                </div>
+                {data.canEditFields && (
+                  <button
+                    className="button button-secondary"
+                    disabled={busy}
+                    onClick={() => patch({ fieldValues })}
+                  >
+                    <Save />
+                    Salvar informações
+                  </button>
+                )}
+              </div>
+              <div className="contract-fields-grid">
+                {data.fieldDefinitions.map((field) => (
+                  <label key={field.key}>
+                    {field.label}
+                    {field.max > 300 ? (
+                      <textarea
+                        rows={3}
+                        disabled={!data.canEditFields}
+                        value={fieldValues[field.key] || ""}
+                        onChange={(event) =>
+                          setFieldValues({
+                            ...fieldValues,
+                            [field.key]: event.target.value,
+                          })
+                        }
+                      />
+                    ) : (
+                      <input
+                        disabled={!data.canEditFields}
+                        value={fieldValues[field.key] || ""}
+                        onChange={(event) =>
+                          setFieldValues({
+                            ...fieldValues,
+                            [field.key]: event.target.value,
+                          })
+                        }
+                      />
+                    )}
+                  </label>
+                ))}
+              </div>
+              {data.renderedDocument && (
+                <details className="contract-preview">
+                  <summary>Visualizar conteúdo do contrato</summary>
+                  <pre>{data.renderedDocument}</pre>
+                </details>
+              )}
+              {data.canGenerate && (
+                <button
+                  className="button button-primary"
+                  disabled={busy}
+                  onClick={generatePdf}
+                >
+                  <FileCheck2 />
+                  Gerar PDF validado
+                </button>
+              )}
+            </article>
+          )}
+          <article className="contract-file-card">
+            <div className="contract-file-icon">
+              <FileCheck2 />
+            </div>
+            <div className="contract-file-info">
+              <p className="eyebrow">Documento</p>
+              {contract.fileName ? (
+                <>
+                  <h2>{contract.fileName}</h2>
+                  <small>
+                    PDF · {bytes(contract.fileSize)} · enviado em{" "}
+                    {date(contract.fileUploadedAt)}
+                  </small>
+                </>
+              ) : (
+                <>
+                  <h2>Nenhum arquivo enviado</h2>
+                  <small>Envie o contrato em PDF, com até 10 MB.</small>
+                </>
+              )}
+            </div>
+            <div className="contract-file-actions">
+              {contract.fileName && (
+                <>
+                  <a
+                    className="button button-secondary"
+                    href={`/api/contracts/${contract.id}/file?view=1`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Eye />
+                    Visualizar
+                  </a>
+                  <a
+                    className="button button-secondary"
+                    href={`/api/contracts/${contract.id}/file`}
+                  >
+                    <Download />
+                    Baixar
+                  </a>
+                </>
+              )}{" "}
+              {editable && data.canGenerate && (
+                <label className="button button-primary contract-upload">
+                  <Upload />
+                  {contract.fileName ? "Substituir PDF" : "Enviar PDF"}
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={upload}
+                    disabled={busy}
+                  />
+                </label>
+              )}
+            </div>
+          </article>
+          <article className="contract-notes">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Controle interno</p>
+                <h2>Observações</h2>
+              </div>
+            </div>
+            <textarea
+              rows={5}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              disabled={!data.canEditFields}
+              placeholder="Nenhuma observação registrada."
+            />
+            {data.canEditFields && (
+              <button
+                className="button button-secondary"
+                onClick={() => patch({ notes })}
+                disabled={busy}
+              >
+                Salvar observações
+              </button>
+            )}
+          </article>
+          <article className="contract-timeline">
+            <p className="eyebrow">Histórico</p>
+            <h2>Alterações do contrato</h2>
+            {data.activities.map((activity) => (
+              <div key={activity.id}>
+                <i />
+                <p>{activity.description}</p>
+                <small>
+                  {activity.authorName} ·{" "}
+                  {new Date(
+                    activity.createdAt.replace(" ", "T") + "Z",
+                  ).toLocaleString("pt-BR")}
+                </small>
+              </div>
+            ))}
+          </article>
+        </div>
+        <aside>
+          <article className="contract-actions-card">
+            <p className="eyebrow">Status</p>
+            <h2>Próxima etapa</h2>
+            {contract.status === "DRAFT" && data.canManageStatus && (
+              <>
+                <button
+                  className="button button-primary"
+                  disabled={busy || !contract.fileName}
+                  onClick={() => patch({ status: "SENT" })}
+                >
+                  <Send />
+                  Marcar como enviado
+                </button>
+                {!contract.fileName && (
+                  <small>Envie o PDF antes de avançar.</small>
+                )}
+              </>
+            )}
+            {contract.status === "SENT" && data.canManageStatus && (
+              <button
+                className="button button-primary"
+                disabled={busy}
+                onClick={() => patch({ status: "SIGNED" })}
+              >
+                <Check />
+                Marcar como assinado
+              </button>
+            )}
+            {["DRAFT", "SENT"].includes(contract.status) &&
+              data.canManageStatus && (
+                <button
+                  className="button button-secondary contract-cancel"
+                  disabled={busy}
+                  onClick={() =>
+                    window.confirm(
+                      "Cancelar este contrato? Esta ação não poderá ser desfeita.",
+                    ) && patch({ status: "CANCELLED" })
+                  }
+                >
+                  <Ban />
+                  Cancelar contrato
+                </button>
+              )}
+            {contract.status === "SIGNED" && (
+              <p className="contract-terminal">
+                <Check />
+                Contrato assinado em {date(contract.signedAt)}.
+              </p>
+            )}
+            {contract.status === "CANCELLED" && (
+              <p className="contract-terminal cancelled">
+                <Ban />
+                Contrato cancelado.
+              </p>
+            )}
+          </article>
+          <article className="contract-summary">
+            <p className="eyebrow">Relacionamentos</p>
+            <h2>{date(contract.eventDate)}</h2>
+            <dl>
+              <div>
+                <dt>Cliente</dt>
+                <dd>{contract.customerName}</dd>
+              </div>
+              <div>
+                <dt>Artista</dt>
+                <dd>{contract.artistName}</dd>
+              </div>
+              <div>
+                <dt>Local</dt>
+                <dd>{contract.venue || "A definir"}</dd>
+              </div>
+              <div>
+                <dt>Cidade</dt>
+                <dd>
+                  {contract.city} · {contract.state}
+                </dd>
+              </div>
+              <div>
+                <dt>Show</dt>
+                <dd>{contract.showId ? "Vinculado" : "Ainda não criado"}</dd>
+              </div>
+              <div>
+                <dt>Criado por</dt>
+                <dd>{contract.createdByName}</dd>
+              </div>
+            </dl>
+          </article>
+        </aside>
+      </div>
+    </section>
+  );
 }
