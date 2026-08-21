@@ -21,6 +21,6 @@ test("sessões locais usam cookie HttpOnly e token armazenado como hash", async 
   assert.match(auth, /sameSite:\s*"strict"/);
   assert.match(auth, /SHA-256/);
   assert.match(auth, /PBKDF2/);
-  assert.match(auth, /210_000/);
+  assert.match(auth, /100_000/);
   assert.doesNotMatch(auth, /INSERT INTO sessions \(token,/);
 });

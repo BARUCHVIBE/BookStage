@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
+import { pbkdf2 } from "node:crypto";
 import { cookies } from "next/headers";
 import { ensureDatabase } from "@/db/bootstrap";
 
 const SESSION_COOKIE = "bookstage_session";
 const SESSION_DAYS = 7;
+const PASSWORD_ITERATIONS = 100_000;
 const DEFAULT_EMAIL = "admin@bookstage.local";
 const DEFAULT_PASSWORD = "BookStage@2026";
 const DEFAULT_USER_ID = "user-a";
@@ -31,24 +33,21 @@ async function sha256(value: string) {
 }
 
 async function passwordHash(password: string, salt: string) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
+  // Cloudflare Workers caps PBKDF2 at 100k iterations. Login throttling and
+  // individual random salts provide the additional online-attack protection.
+  return new Promise<string>((resolve, reject) =>
+    pbkdf2(
+      password,
+      salt,
+      PASSWORD_ITERATIONS,
+      32,
+      "sha256",
+      (error, derivedKey) => {
+        if (error) reject(error);
+        else resolve(toHex(derivedKey));
+      },
+    ),
   );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: encoder.encode(salt),
-      iterations: 210_000,
-    },
-    key,
-    256,
-  );
-  return toHex(new Uint8Array(bits));
 }
 
 export async function createPasswordCredential(password: string) {
