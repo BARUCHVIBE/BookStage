@@ -5,7 +5,12 @@ import { ExternalLink, Instagram, MapPin, Music2 } from "lucide-react";
 import {
   getPublicArtists,
   getPublicOrganization,
+  getPublicOrganizationBranding,
 } from "@/app/lib/public-catalog";
+import {
+  publicCatalogPresentation,
+  publicThemeStyle,
+} from "@/app/lib/public-theme";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +20,19 @@ export async function generateMetadata({
   params: Promise<{ organizationSlug: string }>;
 }): Promise<Metadata> {
   const { organizationSlug } = await params,
-    organization = await getPublicOrganization(organizationSlug);
+    [organization, branding] = await Promise.all([
+      getPublicOrganization(organizationSlug),
+      getPublicOrganizationBranding(organizationSlug),
+    ]);
+  const presentation =
+    organization && branding
+      ? publicCatalogPresentation(organization, branding)
+      : null;
   return organization
     ? {
-        title: `${organization.name} — Catálogo`,
+        title: `${presentation?.title || organization.name} — ${organization.name}`,
         description:
-          organization.description ||
-          `Conheça os artistas de ${organization.name}.`,
+          presentation?.description || `Conheça os artistas de ${organization.name}.`,
       }
     : { title: "Catálogo não encontrado" };
 }
@@ -34,9 +45,18 @@ export default async function PublicCatalogPage({
   const { organizationSlug } = await params,
     organization = await getPublicOrganization(organizationSlug);
   if (!organization) notFound();
-  const artists = await getPublicArtists(organizationSlug);
+  const [artists, branding] = await Promise.all([
+    getPublicArtists(organizationSlug),
+    getPublicOrganizationBranding(organizationSlug),
+  ]);
+  if (!branding) notFound();
+  const presentation = publicCatalogPresentation(organization, branding),
+    logoUrl = branding.logoUrl || organization.logo;
   return (
-    <main className="public-catalog">
+    <main
+      className={`public-catalog catalog-index-page${presentation.coverUrl ? " has-catalog-cover" : ""}`}
+      style={publicThemeStyle(branding)}
+    >
       <header className="public-header">
         <a href="/" className="public-brand">
           <span className="brand-mark">
@@ -59,20 +79,32 @@ export default async function PublicCatalogPage({
           )}
         </nav>
       </header>
-      <section className="catalog-hero">
-        <div className="catalog-org-logo">
-          {organization.logo ? (
-            <img src={organization.logo} alt={`Logo ${organization.name}`} />
-          ) : (
-            organization.name[0]
-          )}
+      <section
+        className={`catalog-hero${presentation.coverUrl ? " has-cover" : ""}`}
+      >
+        {presentation.coverUrl && (
+          <img
+            className="catalog-hero-cover"
+            src={presentation.coverUrl}
+            alt=""
+            aria-hidden="true"
+          />
+        )}
+        {presentation.coverUrl && (
+          <span className="catalog-hero-overlay" aria-hidden="true" />
+        )}
+        <div className="catalog-hero-content">
+          <div className="catalog-org-logo">
+            {logoUrl ? (
+              <img src={logoUrl} alt={`Logo ${organization.name}`} />
+            ) : (
+              organization.name[0]
+            )}
+          </div>
+          <p className="eyebrow">Catálogo oficial</p>
+          <h1>{presentation.title}</h1>
+          <p>{presentation.description}</p>
         </div>
-        <p className="eyebrow">Catálogo oficial</p>
-        <h1>{organization.name}</h1>
-        <p>
-          {organization.description ||
-            "Artistas, projetos e experiências ao vivo para o seu evento."}
-        </p>
       </section>
       <section className="public-artists">
         <div className="public-section-heading">

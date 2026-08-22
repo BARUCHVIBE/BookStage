@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { BookStageApp } from "./bookstage-app";
 import { LoginForm } from "./login-form";
 import { currentUser } from "./lib/request-context";
+import { appearanceBootScript } from "./lib/appearance";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -12,5 +13,12 @@ export const metadata: Metadata = {
 export default async function Home() {
   const user = await currentUser();
   if (!user) return <LoginForm />;
-  return <BookStageApp user={user} />;
+  return (
+    <>
+      <script
+        dangerouslySetInnerHTML={{ __html: appearanceBootScript(user.id) }}
+      />
+      <BookStageApp user={user} />
+    </>
+  );
 }

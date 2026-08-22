@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   calendarStatuses,
   canManageCalendar,
+  canViewCalendarInternalNotes,
+  canViewCalendarStatuses,
   canViewCalendar,
   intervalsOverlap,
   isBlockingStatus,
@@ -73,6 +75,24 @@ test("aplica permissões da agenda por perfil e atribuição", () => {
   assert.equal(canViewCalendar("SALES", false), false);
 });
 
+test("Booking e Finance não visualizam notas internas da agenda", () => {
+  assert.equal(canViewCalendarInternalNotes("BOOKING_AGENT"), false);
+  assert.equal(canViewCalendarInternalNotes("FINANCE"), false);
+  assert.equal(canViewCalendarInternalNotes("OWNER"), true);
+  assert.equal(canViewCalendarInternalNotes("MANAGER"), true);
+  assert.equal(canViewCalendarInternalNotes("SALES"), true);
+  assert.equal(canViewCalendarInternalNotes("PRODUCTION"), true);
+});
+
+test("Booking não visualiza status internos da agenda", () => {
+  assert.equal(canViewCalendarStatuses("BOOKING_AGENT"), false);
+  assert.equal(canViewCalendarStatuses("OWNER"), true);
+  assert.equal(canViewCalendarStatuses("MANAGER"), true);
+  assert.equal(canViewCalendarStatuses("SALES"), true);
+  assert.equal(canViewCalendarStatuses("PRODUCTION"), true);
+  assert.equal(canViewCalendarStatuses("FINANCE"), true);
+});
+
 test("migration garante isolamento e conflitos no banco", async () => {
   const sql = await readFile(
     new URL("../drizzle/0003_black_deathbird.sql", import.meta.url),
@@ -97,8 +117,21 @@ test("APIs mantêm filtros, edição e exclusão escopados pela organização", 
   assert.match(collection, /entry\.organization_id=\?/);
   assert.match(collection, /entry\.artist_id=\?/);
   assert.match(collection, /entry\.status=\?/);
+  assert.match(collection, /NULL AS internalNotes,NULL AS createdBy/);
+  assert.match(collection, /NULL AS status/);
+  assert.match(collection, /AS displayTone/);
+  assert.doesNotMatch(collection, /AS displayColor/);
+  assert.doesNotMatch(collection, /AS displayBackground/);
+  assert.match(collection, /THEN 'positive'/);
+  assert.match(collection, /THEN 'critical'/);
+  assert.match(collection, /canViewInternalNotes/);
+  assert.match(collection, /canViewStatuses/);
+  assert.match(collection, /entry\.created_by=\?[\s\S]*AS canEdit/);
   assert.match(item, /WHERE id=\? AND organization_id=\?/);
   assert.match(item, /UPDATE calendar_entries[\s\S]*organization_id=\?/);
+  assert.match(item, /ELSE internal_notes END/);
+  assert.match(item, /existing\.createdBy !== context\.user\.id/);
+  assert.match(item, /entry\.createdBy !== context\.user\.id/);
   assert.match(
     item,
     /DELETE FROM calendar_entries WHERE id=\? AND organization_id=\?/,

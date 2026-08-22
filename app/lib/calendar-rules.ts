@@ -38,6 +38,14 @@ export function canManageCalendar(role: Role, artistAssigned: boolean) {
   );
 }
 
+export function canViewCalendarInternalNotes(role: Role) {
+  return role !== "BOOKING_AGENT" && role !== "FINANCE";
+}
+
+export function canViewCalendarStatuses(role: Role) {
+  return role !== "BOOKING_AGENT";
+}
+
 export function normalizeCalendarInput(
   body: Record<string, unknown>,
 ): CalendarInput {

@@ -6,6 +6,8 @@ import {
   requireArtistCalendarAccess,
 } from "@/app/lib/calendar-access";
 import {
+  canViewCalendarInternalNotes,
+  canViewCalendarStatuses,
   isBlockingStatus,
   normalizeCalendarInput,
 } from "@/app/lib/calendar-rules";
@@ -16,12 +18,13 @@ type ExistingEntry = {
   artistId: string;
   status: string;
   title: string;
+  createdBy: string;
   opportunityId: string | null;
 };
 
 async function findEntry(id: string, organizationId: string) {
   return env.DB.prepare(
-    `SELECT entry.id,entry.artist_id AS artistId,entry.status,entry.title,link.opportunity_id AS opportunityId FROM calendar_entries entry LEFT JOIN opportunity_calendar_entries link ON link.calendar_entry_id=entry.id AND link.organization_id=entry.organization_id WHERE entry.id=? AND entry.organization_id=?`,
+    `SELECT entry.id,entry.artist_id AS artistId,entry.status,entry.title,entry.created_by AS createdBy,link.opportunity_id AS opportunityId FROM calendar_entries entry LEFT JOIN opportunity_calendar_entries link ON link.calendar_entry_id=entry.id AND link.organization_id=entry.organization_id WHERE entry.id=? AND entry.organization_id=?`,
   )
     .bind(id, organizationId)
     .first<ExistingEntry>();
@@ -39,6 +42,14 @@ export async function PUT(
   const existing = await findEntry(id, context.organizationId);
   if (!existing)
     return Response.json({ error: "Evento não encontrado." }, { status: 404 });
+  if (
+    context.membership.role === "BOOKING_AGENT" &&
+    existing.createdBy !== context.user.id
+  )
+    return Response.json(
+      { error: "Você pode alterar apenas eventos criados por você." },
+      { status: 403 },
+    );
   if (existing.opportunityId)
     return Response.json(
       {
@@ -49,8 +60,11 @@ export async function PUT(
     );
   let input;
   try {
+    const body = (await request.json()) as Record<string, unknown>;
     input = normalizeCalendarInput(
-      (await request.json()) as Record<string, unknown>,
+      context.membership.role === "BOOKING_AGENT"
+        ? { ...body, status: existing.status }
+        : body,
     );
   } catch (error) {
     return Response.json(
@@ -86,8 +100,11 @@ export async function PUT(
     if (conflict) return conflictResponse(conflict);
   }
   try {
+    const canViewInternalNotes = canViewCalendarInternalNotes(
+      context.membership.role,
+    );
     await env.DB.prepare(
-      `UPDATE calendar_entries SET artist_id=?,start_datetime=?,end_datetime=?,status=?,title=?,internal_notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+      `UPDATE calendar_entries SET artist_id=?,start_datetime=?,end_datetime=?,status=?,title=?,internal_notes=CASE WHEN ?=1 THEN ? ELSE internal_notes END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
     )
       .bind(
         input.artistId,
@@ -95,6 +112,7 @@ export async function PUT(
         input.endDatetime,
         input.status,
         input.title,
+        canViewInternalNotes ? 1 : 0,
         input.internalNotes,
         id,
         context.organizationId,
@@ -114,7 +132,18 @@ export async function PUT(
     throw error;
   }
   return Response.json({
-    entry: { id, ...input, artistName: access.artist.name },
+    entry: {
+      id,
+      ...input,
+      status: canViewCalendarStatuses(context.membership.role)
+        ? input.status
+        : null,
+      internalNotes: canViewCalendarInternalNotes(context.membership.role)
+        ? input.internalNotes
+        : null,
+      canEdit: true,
+      artistName: access.artist.name,
+    },
   });
 }
 
@@ -130,6 +159,14 @@ export async function DELETE(
   const entry = await findEntry(id, context.organizationId);
   if (!entry)
     return Response.json({ error: "Evento não encontrado." }, { status: 404 });
+  if (
+    context.membership.role === "BOOKING_AGENT" &&
+    entry.createdBy !== context.user.id
+  )
+    return Response.json(
+      { error: "Você pode remover apenas eventos criados por você." },
+      { status: 403 },
+    );
   if (entry.opportunityId)
     return Response.json(
       {

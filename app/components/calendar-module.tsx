@@ -22,9 +22,18 @@ type CalendarEntry = {
   artistName: string;
   startDatetime: string;
   endDatetime: string | null;
-  status: CalendarStatus;
+  status: CalendarStatus | null;
   title: string;
   internalNotes: string | null;
+  canEdit: boolean | number;
+  displayTone:
+    | "positive"
+    | "notice"
+    | "attention"
+    | "highlight"
+    | "critical"
+    | null;
+  displayPriority: number | null;
 };
 type EntryForm = {
   artistId: string;
@@ -34,7 +43,6 @@ type EntryForm = {
   title: string;
   internalNotes: string;
 };
-
 const statuses: Array<{ value: CalendarStatus; label: string }> = [
   { value: "AVAILABLE", label: "Disponível" },
   { value: "INQUIRY", label: "Consulta" },
@@ -97,6 +105,8 @@ export function CalendarModule({
     [status, setStatus] = useState("");
   const [entries, setEntries] = useState<CalendarEntry[]>([]),
     [canCreate, setCanCreate] = useState(false),
+    [canViewInternalNotes, setCanViewInternalNotes] = useState(false),
+    [canViewStatuses, setCanViewStatuses] = useState(false),
     [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<CalendarEntry | null>(null),
     [form, setForm] = useState<EntryForm>(() =>
@@ -110,20 +120,24 @@ export function CalendarModule({
   const requestEntries = useCallback(async () => {
     const params = new URLSearchParams({ month });
     if (artistId) params.set("artistId", artistId);
-    if (status) params.set("status", status);
+    if (canViewStatuses && status) params.set("status", status);
     const response = await fetch(`/api/calendar?${params}`),
       data = (await response.json()) as {
         entries?: CalendarEntry[];
         canCreate?: boolean;
+        canViewInternalNotes?: boolean;
+        canViewStatuses?: boolean;
         error?: string;
       };
     return { response, data };
-  }, [month, artistId, status]);
+  }, [month, artistId, status, canViewStatuses]);
   const load = useCallback(async () => {
     const { response, data } = await requestEntries();
     if (response.ok) {
       setEntries(data.entries || []);
       setCanCreate(Boolean(data.canCreate));
+      setCanViewInternalNotes(Boolean(data.canViewInternalNotes));
+      setCanViewStatuses(Boolean(data.canViewStatuses));
       setError("");
     } else setError(data.error || "Não foi possível carregar a agenda.");
     setLoading(false);
@@ -135,6 +149,8 @@ export function CalendarModule({
       if (response.ok) {
         setEntries(data.entries || []);
         setCanCreate(Boolean(data.canCreate));
+        setCanViewInternalNotes(Boolean(data.canViewInternalNotes));
+        setCanViewStatuses(Boolean(data.canViewStatuses));
         setError("");
       } else setError(data.error || "Não foi possível carregar a agenda.");
       setLoading(false);
@@ -170,15 +186,16 @@ export function CalendarModule({
       artistId: entry.artistId,
       start: localInput(entry.startDatetime),
       end: localInput(entry.endDatetime),
-      status: entry.status,
+      status: entry.status || "OPTION",
       title: entry.title,
-      internalNotes: entry.internalNotes || "",
+      internalNotes: canViewInternalNotes ? entry.internalNotes || "" : "",
     });
     setError("");
     setNotice("");
     setConfirmDelete(false);
     setPanelOpen(true);
   }
+  const editingAllowed = !editing || Boolean(editing.canEdit);
   async function save(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -186,9 +203,9 @@ export function CalendarModule({
       artistId: form.artistId,
       startDatetime: form.start ? new Date(form.start).toISOString() : "",
       endDatetime: form.end ? new Date(form.end).toISOString() : null,
-      status: form.status,
+      status: canViewStatuses ? form.status : "OPTION",
       title: form.title,
-      internalNotes: form.internalNotes,
+      ...(canViewInternalNotes ? { internalNotes: form.internalNotes } : {}),
     };
     const response = await fetch(
         editing ? `/api/calendar/${editing.id}` : "/api/calendar",
@@ -293,33 +310,37 @@ export function CalendarModule({
               ))}
             </select>
           </label>
-          <label>
-            Status
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option value="">Todos os status</option>
-              {statuses.map((item) => (
-                <option value={item.value} key={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {canViewStatuses && (
+            <label>
+              Status
+              <select
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+              >
+                <option value="">Todos os status</option>
+                {statuses.map((item) => (
+                  <option value={item.value} key={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </div>
-      <div className="status-legend">
-        {statuses.map((item) => (
-          <span
-            key={item.value}
-            className={`status-${item.value.toLowerCase()}`}
-          >
-            <i />
-            {item.label}
-          </span>
-        ))}
-      </div>
+      {canViewStatuses && (
+        <div className="status-legend">
+          {statuses.map((item) => (
+            <span
+              key={item.value}
+              className={`status-${item.value.toLowerCase()}`}
+            >
+              <i />
+              {item.label}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="month-calendar">
         {weekdays.map((day) => (
           <div className="weekday" key={day}>
@@ -332,16 +353,27 @@ export function CalendarModule({
               localInput(entry.startDatetime).startsWith(key),
             ),
             dayStatus = dayEntries.reduce<CalendarStatus | null>(
-              (current, entry) =>
-                !current ||
-                statusPriority[entry.status] > statusPriority[current]
+              (current, entry) => {
+                if (!entry.status) return current;
+                return !current ||
+                  statusPriority[entry.status] > statusPriority[current]
                   ? entry.status
-                  : current,
+                  : current;
+              },
               null,
-            );
+            ),
+            privateVisual = dayEntries.reduce<CalendarEntry | null>(
+              (current, entry) =>
+                !entry.displayPriority ||
+                (current?.displayPriority ?? 0) >= entry.displayPriority
+                  ? current
+                  : entry,
+              null,
+            ),
+            privateTone = privateVisual?.displayTone;
           return (
             <div
-              className={`calendar-day ${day.getMonth() !== cursor.getMonth() ? "outside-month" : ""} ${dayStatus ? `day-status-${dayStatus.toLowerCase()}` : ""}`}
+              className={`calendar-day ${day.getMonth() !== cursor.getMonth() ? "outside-month" : ""} ${dayStatus ? `day-status-${dayStatus.toLowerCase()}` : ""} ${privateTone ? `day-visual-status calendar-tone-${privateTone}` : ""}`}
               key={key}
             >
               <button
@@ -358,7 +390,7 @@ export function CalendarModule({
                 {dayEntries.slice(0, 3).map((entry) => (
                   <button
                     key={entry.id}
-                    className={`calendar-event status-${entry.status.toLowerCase()}`}
+                    className={`calendar-event ${entry.status ? `status-${entry.status.toLowerCase()}` : `calendar-event-private${entry.displayTone ? ` calendar-tone-${entry.displayTone}` : ""}`}`}
                     onClick={() => openEdit(entry)}
                     title={`${entry.artistName} — ${entry.title}`}
                   >
@@ -394,7 +426,11 @@ export function CalendarModule({
             <div className="calendar-panel-head">
               <div>
                 <p className="eyebrow">
-                  {editing ? "Editar evento" : "Novo evento"}
+                  {editing
+                    ? editingAllowed
+                      ? "Editar evento"
+                      : "Visualizar evento"
+                    : "Novo evento"}
                 </p>
                 <h2>{editing ? editing.title : "Adicionar à agenda"}</h2>
               </div>
@@ -411,6 +447,7 @@ export function CalendarModule({
               Artista *
               <select
                 required
+                disabled={!editingAllowed}
                 value={form.artistId}
                 onChange={(event) =>
                   setForm({ ...form, artistId: event.target.value })
@@ -430,6 +467,7 @@ export function CalendarModule({
               Título *
               <input
                 required
+                disabled={!editingAllowed}
                 value={form.title}
                 onChange={(event) =>
                   setForm({ ...form, title: event.target.value })
@@ -442,6 +480,7 @@ export function CalendarModule({
                 Início *
                 <input
                   required
+                  disabled={!editingAllowed}
                   type="datetime-local"
                   value={form.start}
                   onChange={(event) =>
@@ -453,6 +492,7 @@ export function CalendarModule({
                 Término
                 <input
                   type="datetime-local"
+                  disabled={!editingAllowed}
                   value={form.end}
                   onChange={(event) =>
                     setForm({ ...form, end: event.target.value })
@@ -460,40 +500,46 @@ export function CalendarModule({
                 />
               </label>
             </div>
-            <label>
-              Status *
-              <select
-                value={form.status}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    status: event.target.value as CalendarStatus,
-                  })
-                }
-              >
-                {statuses.map((item) => (
-                  <option value={item.value} key={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Notas internas
-              <textarea
-                value={form.internalNotes}
-                onChange={(event) =>
-                  setForm({ ...form, internalNotes: event.target.value })
-                }
-                placeholder="Informações visíveis apenas para a equipe"
-              />
-            </label>
-            <div className="calendar-form-hint">
-              <Clock3 />
-              Confirmações e bloqueios são verificados contra conflitos antes de
-              salvar.
-            </div>
-            {confirmDelete ? (
+            {canViewStatuses && (
+              <label>
+                Status *
+                <select
+                  value={form.status}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      status: event.target.value as CalendarStatus,
+                    })
+                  }
+                >
+                  {statuses.map((item) => (
+                    <option value={item.value} key={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {canViewInternalNotes && (
+              <label>
+                Notas internas
+                <textarea
+                  value={form.internalNotes}
+                  onChange={(event) =>
+                    setForm({ ...form, internalNotes: event.target.value })
+                  }
+                  placeholder="Informações visíveis apenas para a equipe"
+                />
+              </label>
+            )}
+            {canViewStatuses && editingAllowed && (
+              <div className="calendar-form-hint">
+                <Clock3 />
+                Confirmações e bloqueios são verificados contra conflitos antes
+                de salvar.
+              </div>
+            )}
+            {!editingAllowed ? null : confirmDelete ? (
               <div className="delete-confirm">
                 <p>Remover este evento definitivamente?</p>
                 <div>

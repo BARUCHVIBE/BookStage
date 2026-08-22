@@ -16,7 +16,9 @@ import {
   getPublicArtist,
   getPublicAvailability,
   getPublicOrganization,
+  getPublicOrganizationBranding,
 } from "@/app/lib/public-catalog";
+import { publicThemeStyle } from "@/app/lib/public-theme";
 
 export const dynamic = "force-dynamic";
 const external = (value: string) =>
@@ -45,17 +47,21 @@ export default async function PublicArtistPage({
 }) {
   const { organizationSlug, artistSlug } = await params,
     { r } = await searchParams,
-    [organization, artist] = await Promise.all([
+    [organization, artist, branding] = await Promise.all([
       getPublicOrganization(organizationSlug),
       getPublicArtist(organizationSlug, artistSlug),
+      getPublicOrganizationBranding(organizationSlug),
     ]);
-  if (!organization || !artist) notFound();
+  if (!organization || !artist || !branding) notFound();
   const availability = await getPublicAvailability(
     organizationSlug,
     artistSlug,
   );
   return (
-    <main className="public-catalog artist-public-page">
+    <main
+      className="public-catalog artist-public-page"
+      style={publicThemeStyle(branding)}
+    >
       <header className="public-header">
         <a href={`/catalogo/${organizationSlug}`} className="back-to-catalog">
           <ArrowLeft />

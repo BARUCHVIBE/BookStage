@@ -4,6 +4,7 @@ import type {
   PublicArtistCard,
   PublicOrganization,
 } from "./public-catalog-dto";
+import { resolveOrganizationBranding } from "./organization-branding";
 
 export { publicArtistDto, publicCatalogDto } from "./public-catalog-dto";
 
@@ -48,6 +49,15 @@ export async function getPublicOrganization(slug: string) {
         website: safeUrl(row.website),
       }
     : null;
+}
+
+export async function getPublicOrganizationBranding(slug: string) {
+  const row = await env.DB.prepare(
+    `SELECT organization.logo AS logoUrl,branding.favicon_url AS faviconUrl,branding.primary_color AS primaryColor,branding.secondary_color AS secondaryColor,branding.accent_color AS accentColor,branding.background_color AS backgroundColor,branding.heading_font AS headingFont,branding.body_font AS bodyFont,branding.catalog_cover_url AS catalogCoverUrl,branding.catalog_title AS catalogTitle,branding.catalog_description AS catalogDescription FROM organizations organization LEFT JOIN organization_branding branding ON branding.organization_id=organization.id WHERE organization.slug=? AND organization.status='ACTIVE'`,
+  )
+    .bind(slug)
+    .first();
+  return row ? resolveOrganizationBranding(row) : null;
 }
 
 export async function getPublicArtists(organizationSlug: string) {

@@ -15,6 +15,7 @@ import {
   Music2,
   Plus,
   Save,
+  Settings,
   ShieldCheck,
   Sparkles,
   Users,
@@ -28,6 +29,9 @@ import { ContractsModule } from "@/app/components/contracts-module";
 import { ShowsModule } from "@/app/components/shows-module";
 import { DashboardModule } from "@/app/components/dashboard-module";
 import { TeamModule } from "@/app/components/team-module";
+import { OrganizationThemeProvider } from "@/app/components/organization-theme-provider";
+import { AppearanceSelector } from "@/app/components/appearance-selector";
+import { SettingsModule } from "@/app/features/settings/branding/settings-module";
 
 type Org = {
   id: string;
@@ -96,7 +100,8 @@ type Screen =
   | "crm"
   | "contracts"
   | "shows"
-  | "team";
+  | "team"
+  | "settings";
 const blank = {
   name: "",
   email: "",
@@ -335,7 +340,12 @@ export function BookStageApp({
       />
     );
   return (
-    <div className="app-shell">
+    <OrganizationThemeProvider
+      key={active?.id ?? "bookstage-default"}
+      organizationId={active?.id ?? null}
+      userId={user.id}
+    >
+      <div className="app-shell">
       <button
         className="mobile-menu-button"
         aria-label="Abrir menu"
@@ -362,8 +372,13 @@ export function BookStageApp({
           </button>
         </div>
         <div className="sidebar-org">
-          <div className="org-avatar">
-            {active?.name[0] ?? organizations[0]?.name[0]}
+          <div className={`org-avatar ${active?.logo ? "has-logo" : ""}`}>
+            {active?.logo ? (
+              // eslint-disable-next-line @next/next/no-img-element -- organization assets may be served by R2 or an existing HTTPS URL.
+              <img src={active.logo} alt={`Logo de ${active.name}`} />
+            ) : (
+              (active?.name[0] ?? organizations[0]?.name[0])
+            )}
           </div>
           <div>
             <small>Organização</small>
@@ -462,6 +477,19 @@ export function BookStageApp({
             <Users />
             <span>Equipe</span>
           </button>
+          {active && ["OWNER", "MANAGER"].includes(active.role) && (
+            <button
+              className={screen === "settings" ? "nav-active" : ""}
+              onClick={() => {
+                setScreen("settings");
+                setSelectedArtist(null);
+                setMenuOpen(false);
+              }}
+            >
+              <Settings />
+              <span>Configurações</span>
+            </button>
+          )}
           <p className="nav-label">Próximos módulos</p>
           {futureModules.map(([label, Icon]) => (
             <button disabled key={label}>
@@ -513,17 +541,20 @@ export function BookStageApp({
               </select>
             </div>
           </div>
-          <button
-            className="button button-secondary"
-            onClick={() => {
-              setForm(blank);
-              setEditing(false);
-              setFormOpen(true);
-            }}
-          >
-            <Plus size={16} />
-            Nova organização
-          </button>
+          <div className="topbar-actions">
+            <AppearanceSelector />
+            <button
+              className="button button-secondary"
+              onClick={() => {
+                setForm(blank);
+                setEditing(false);
+                setFormOpen(true);
+              }}
+            >
+              <Plus size={16} />
+              Nova organização
+            </button>
+          </div>
         </header>
         <div className="page-content">
           {!active ? (
@@ -556,6 +587,28 @@ export function BookStageApp({
                   )
                   .then((data) => setMembers(data.members || []))
               }
+            />
+          ) : screen === "settings" ? (
+            <SettingsModule
+              key={active.id}
+              organization={active}
+              onOrganizationUpdated={(organization) => {
+                const updated: Org = {
+                  ...organization,
+                  phone: organization.phone ?? undefined,
+                  document: organization.document ?? undefined,
+                  website: organization.website ?? undefined,
+                  instagram: organization.instagram ?? undefined,
+                  logo: organization.logo ?? undefined,
+                  description: organization.description ?? undefined,
+                };
+                setActive(updated);
+                setOrganizations((current) =>
+                  current.map((item) =>
+                    item.id === organization.id ? updated : item,
+                  ),
+                );
+              }}
             />
           ) : screen === "agenda" ? (
             <CalendarModule
@@ -599,7 +652,8 @@ export function BookStageApp({
           )}
         </div>
       </main>
-    </div>
+      </div>
+    </OrganizationThemeProvider>
   );
 }
 

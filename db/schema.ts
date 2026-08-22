@@ -51,6 +51,28 @@ export const organizations = sqliteTable(
   (table) => [uniqueIndex("idx_organizations_slug").on(table.slug)],
 );
 
+export const organizationBranding = sqliteTable("organization_branding", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  faviconUrl: text("favicon_url"),
+  primaryColor: text("primary_color").notNull().default("#111827"),
+  secondaryColor: text("secondary_color").notNull().default("#374151"),
+  accentColor: text("accent_color").notNull().default("#E2B002"),
+  backgroundColor: text("background_color").notNull().default("#F8F8F8"),
+  headingFont: text("heading_font").notNull().default("Inter"),
+  bodyFont: text("body_font").notNull().default("Inter"),
+  catalogCoverUrl: text("catalog_cover_url"),
+  catalogTitle: text("catalog_title"),
+  catalogDescription: text("catalog_description"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const memberships = sqliteTable(
   "memberships",
   {

@@ -119,3 +119,29 @@ test("páginas públicas existem em URLs dedicadas", async () => {
     "utf8",
   );
 });
+
+test("catálogo sobrepõe o header ao hero e padroniza somente o painel dos cards", async () => {
+  const page = await readFile(
+      new URL("../app/catalogo/[organizationSlug]/page.tsx", import.meta.url),
+      "utf8",
+    ),
+    css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(page, /catalog-index-page/);
+  assert.match(page, /has-catalog-cover/);
+  assert.match(
+    css,
+    /\.catalog-index-page > \.public-header[\s\S]*?position: absolute;/,
+  );
+  assert.match(css, /\.artist-card-media \{[^}]*aspect-ratio: 2\/3;/);
+  assert.match(css, /\.artist-card-media img \{[\s\S]*?object-fit: cover;/);
+  assert.match(css, /\.public-artist-grid \{[^}]*align-items: stretch;/);
+  assert.match(
+    css,
+    /\.public-artist-card > div:last-child \{[^}]*min-height: 140px;/,
+  );
+  assert.doesNotMatch(
+    css,
+    /\.public-artist-card \{[^}]*grid-template-rows:/,
+  );
+  assert.doesNotMatch(css, /maridao-70/i);
+});

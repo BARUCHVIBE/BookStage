@@ -54,8 +54,9 @@ export function ensureDatabase() {
   // Worker isolates can initialize concurrently and create the same objects.
   if (
     process.env.NODE_ENV === "production" ||
-    (env as unknown as Record<string, unknown>)
-      .BOOKSTAGE_SKIP_RUNTIME_BOOTSTRAP === "true"
+    (process.env.NODE_ENV !== "development" &&
+      (env as unknown as Record<string, unknown>)
+        .BOOKSTAGE_SKIP_RUNTIME_BOOTSTRAP === "true")
   )
     return Promise.resolve();
   initialized ??= initialize();
@@ -98,6 +99,9 @@ async function initialize() {
     ),
     db.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug)`,
+    ),
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS organization_branding (organization_id TEXT PRIMARY KEY NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,favicon_url TEXT,primary_color TEXT NOT NULL DEFAULT '#111827',secondary_color TEXT NOT NULL DEFAULT '#374151',accent_color TEXT NOT NULL DEFAULT '#E2B002',background_color TEXT NOT NULL DEFAULT '#F8F8F8',heading_font TEXT NOT NULL DEFAULT 'Inter',body_font TEXT NOT NULL DEFAULT 'Inter',catalog_cover_url TEXT,catalog_title TEXT,catalog_description TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     ),
     db.prepare(
       `CREATE TABLE IF NOT EXISTS memberships (organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('OWNER','MANAGER','SALES','PRODUCTION','FINANCE')), professional_role TEXT CHECK(professional_role IS NULL OR professional_role='BOOKING_AGENT'), department TEXT NOT NULL DEFAULT 'COMMERCIAL' CHECK(department IN ('MANAGEMENT','COMMERCIAL','PRODUCTION','FINANCE')), artist_access_scope TEXT NOT NULL DEFAULT 'ASSIGNED' CHECK(artist_access_scope IN ('ALL','ASSIGNED')), status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','INACTIVE','INVITED')), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(organization_id,user_id))`,
