@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { currentUser } from "@/app/lib/request-context";
 import { createPasswordCredential } from "@/app/lib/local-auth";
+import { passwordPolicyError } from "@/app/lib/password-policy";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
 import {
   departments,
@@ -29,7 +30,7 @@ export async function GET(
     return Response.json({ error: "Não autenticado" }, { status: 401 });
   const { id } = await context.params;
   const viewer = await env.DB.prepare(
-    `SELECT role AS baseRole,professional_role AS professionalRole,department,artist_access_scope AS artistAccessScope,status FROM memberships WHERE user_id=? AND organization_id=? AND status='ACTIVE'`,
+    `SELECT role AS baseRole,professional_role AS professionalRole,department,artist_access_scope AS artistAccessScope,status FROM memberships WHERE user_id=? AND organization_id=? AND status='ACTIVE' AND EXISTS (SELECT 1 FROM organizations WHERE organizations.id=memberships.organization_id AND organizations.status='ACTIVE')`,
   )
     .bind(user.id, id)
     .first<Viewer>();
@@ -78,7 +79,7 @@ export async function POST(
     return Response.json({ error: "Não autenticado" }, { status: 401 });
   const { id } = await context.params;
   const owner = await env.DB.prepare(
-    `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=? AND role='OWNER' AND professional_role IS NULL AND status='ACTIVE'`,
+    `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=? AND role='OWNER' AND professional_role IS NULL AND status='ACTIVE' AND EXISTS (SELECT 1 FROM organizations WHERE organizations.id=memberships.organization_id AND organizations.status='ACTIVE')`,
   )
     .bind(id, user.id)
     .first();
@@ -134,34 +135,33 @@ export async function POST(
       { error: "Informe um e-mail válido." },
       { status: 400 },
     );
-  if (
-    password.length < 12 ||
-    password.length > 200 ||
-    !/[A-Z]/.test(password) ||
-    !/[a-z]/.test(password) ||
-    !/[0-9]/.test(password)
-  )
-    return Response.json(
-      {
-        error:
-          "A senha deve ter ao menos 12 caracteres, com letra maiúscula, minúscula e número.",
-      },
-      { status: 400 },
-    );
   if (role === "BOOKING_AGENT" && !artistIds.length)
     return Response.json(
       { error: "Selecione ao menos um artista para o Booking." },
       { status: 400 },
     );
-  const existing = await env.DB.prepare(
-    `SELECT id FROM users WHERE lower(email)=?`,
+  const existingUser = await env.DB.prepare(
+    `SELECT id,name FROM users WHERE lower(email)=?`,
   )
     .bind(email)
-    .first();
-  if (existing)
+    .first<{ id: string; name: string | null }>();
+  if (existingUser) {
+    const existingMembership = await env.DB.prepare(
+      `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=?`,
+    )
+      .bind(id, existingUser.id)
+      .first();
+    if (existingMembership)
+      return Response.json(
+        { error: "Este usuário já faz parte desta organização." },
+        { status: 409 },
+      );
+  } else if (passwordPolicyError(password))
     return Response.json(
-      { error: "Este e-mail já possui um acesso no BookStage." },
-      { status: 409 },
+      {
+        error: `Para um novo usuário, ${passwordPolicyError(password)}`,
+      },
+      { status: 400 },
     );
   if (artistIds.length) {
     const placeholders = artistIds.map(() => "?").join(","),
@@ -176,21 +176,25 @@ export async function POST(
         { status: 400 },
       );
   }
-  const userId = crypto.randomUUID(),
-    credential = await createPasswordCredential(password),
+  const userId = existingUser?.id || crypto.randomUUID(),
+    credential = existingUser
+      ? null
+      : await createPasswordCredential(password),
     stored = storedRole(role),
     artistScope = ["SALES", "BOOKING_AGENT"].includes(role)
       ? "ASSIGNED"
       : "ALL";
   const statements = [
-    env.DB.prepare(`INSERT INTO users (id,email,name) VALUES (?,?,?)`).bind(
-      userId,
-      email,
-      name,
-    ),
-    env.DB.prepare(
-      `INSERT INTO auth_credentials (user_id,password_hash,password_salt) VALUES (?,?,?)`,
-    ).bind(userId, credential.hash, credential.salt),
+    ...(!existingUser && credential
+      ? [
+          env.DB.prepare(
+            `INSERT INTO users (id,email,name) VALUES (?,?,?)`,
+          ).bind(userId, email, name),
+          env.DB.prepare(
+            `INSERT INTO auth_credentials (user_id,password_hash,password_salt) VALUES (?,?,?)`,
+          ).bind(userId, credential.hash, credential.salt),
+        ]
+      : []),
     env.DB.prepare(
       `INSERT INTO memberships (organization_id,user_id,role,professional_role,department,artist_access_scope,status) VALUES (?,?,?,?,?,?,'ACTIVE')`,
     ).bind(
@@ -228,12 +232,25 @@ export async function POST(
   try {
     await env.DB.batch(statements);
   } catch {
+    const membershipNowExists = await env.DB.prepare(
+      `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=?`,
+    )
+      .bind(id, userId)
+      .first();
+    if (membershipNowExists)
+      return Response.json(
+        { error: "Este usuário já faz parte desta organização." },
+        { status: 409 },
+      );
     return Response.json(
       {
-        error: "Não foi possível criar o acesso. Verifique o e-mail informado.",
+        error: "Não foi possível criar o acesso nesta organização.",
       },
       { status: 409 },
     );
   }
-  return Response.json({ id: userId }, { status: 201 });
+  return Response.json(
+    { id: userId, reusedUser: Boolean(existingUser) },
+    { status: 201 },
+  );
 }

@@ -12,10 +12,16 @@ export function publicThemeStyle(
   branding: OrganizationBranding,
 ): PublicThemeStyle {
   const backgroundForeground = readableForeground(branding.backgroundColor),
+    cardBackground = "#FFFFFF",
+    cardForeground = readableForeground(cardBackground),
     primaryInk =
       contrastRatio(branding.primaryColor, branding.backgroundColor) >= 4.5
         ? branding.primaryColor
         : backgroundForeground,
+    cardPrimaryInk =
+      contrastRatio(branding.primaryColor, cardBackground) >= 4.5
+        ? branding.primaryColor
+        : cardForeground,
     accentInk =
       contrastRatio(branding.accentColor, branding.backgroundColor) >= 4.5
         ? branding.accentColor
@@ -24,6 +30,9 @@ export function publicThemeStyle(
     "--public-primary": branding.primaryColor,
     "--public-primary-foreground": branding.primaryForeground,
     "--public-primary-ink": primaryInk,
+    "--public-card": cardBackground,
+    "--public-card-foreground": cardForeground,
+    "--public-card-primary-ink": cardPrimaryInk,
     "--public-secondary": branding.secondaryColor,
     "--public-accent": branding.accentColor,
     "--public-accent-foreground": branding.accentForeground,

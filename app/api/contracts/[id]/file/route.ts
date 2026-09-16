@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireActiveMembership } from "@/app/lib/active-membership";
 import { accessibleContract } from "@/app/lib/contract-access";
 import {
+  canManageContract,
   safeContractFileName,
   validateContractFile,
 } from "@/app/lib/contract-rules";
@@ -63,6 +64,7 @@ export async function POST(
       { status: 404 },
     );
   if (
+    !canManageContract(context.membership.role) ||
     context.membership.role === "BOOKING_AGENT" ||
     contract.commercialApprovalStatus !== "APPROVED"
   )

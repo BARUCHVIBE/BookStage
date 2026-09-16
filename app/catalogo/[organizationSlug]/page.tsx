@@ -1,7 +1,10 @@
-/* eslint-disable @next/next/no-html-link-for-pages, @next/next/no-img-element -- catálogo aceita imagens externas configuradas pela organização. */
+/* eslint-disable @next/next/no-html-link-for-pages -- catálogo público utiliza rotas internas sem Link. */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ExternalLink, Instagram, MapPin, Music2 } from "lucide-react";
+import { ResilientImage } from "@/app/components/resilient-image";
+import { PlatformBrand } from "@/app/components/platform-brand";
+import { artistImageSources } from "@/app/lib/artist-assets";
 import {
   getPublicArtists,
   getPublicOrganization,
@@ -59,10 +62,7 @@ export default async function PublicCatalogPage({
     >
       <header className="public-header">
         <a href="/" className="public-brand">
-          <span className="brand-mark">
-            B<span />
-          </span>
-          <b>BookStage</b>
+          <PlatformBrand />
         </a>
         <nav>
           {organization.instagram && (
@@ -83,11 +83,12 @@ export default async function PublicCatalogPage({
         className={`catalog-hero${presentation.coverUrl ? " has-cover" : ""}`}
       >
         {presentation.coverUrl && (
-          <img
+          <ResilientImage
+            sources={[presentation.coverUrl]}
             className="catalog-hero-cover"
-            src={presentation.coverUrl}
             alt=""
             aria-hidden="true"
+            fallback={null}
           />
         )}
         {presentation.coverUrl && (
@@ -95,11 +96,11 @@ export default async function PublicCatalogPage({
         )}
         <div className="catalog-hero-content">
           <div className="catalog-org-logo">
-            {logoUrl ? (
-              <img src={logoUrl} alt={`Logo ${organization.name}`} />
-            ) : (
-              organization.name[0]
-            )}
+            <ResilientImage
+              sources={[logoUrl]}
+              alt={`Logo ${organization.name}`}
+              fallback={organization.name[0]}
+            />
           </div>
           <p className="eyebrow">Catálogo oficial</p>
           <h1>{presentation.title}</h1>
@@ -124,14 +125,11 @@ export default async function PublicCatalogPage({
               key={artist.slug}
             >
               <div className="artist-card-media">
-                {artist.coverUrl || artist.photoUrl ? (
-                  <img
-                    src={artist.coverUrl || artist.photoUrl!}
-                    alt={artist.name}
-                  />
-                ) : (
-                  <Music2 />
-                )}
+                <ResilientImage
+                  sources={artistImageSources(artist.coverUrl, artist.photoUrl)}
+                  alt={artist.name}
+                  fallback={<Music2 aria-hidden="true" />}
+                />
               </div>
               <div>
                 <p>{artist.genre || "Artista"}</p>
@@ -153,7 +151,7 @@ export default async function PublicCatalogPage({
       </section>
       <footer className="public-footer">
         <span>{organization.name}</span>
-        <small>Catálogo comercial powered by BookStage</small>
+        <small>Catálogo comercial powered by BookBusiness</small>
       </footer>
     </main>
   );

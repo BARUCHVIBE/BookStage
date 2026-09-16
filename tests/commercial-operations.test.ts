@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canViewArtist } from "../app/lib/artist-access";
 import { canManageCalendar, canViewCalendar } from "../app/lib/calendar-rules";
@@ -26,6 +27,21 @@ test("Booking Agent usa papel profissional sobre a permissão comercial base", (
   });
   assert.equal(canViewArtist("BOOKING_AGENT", true), true);
   assert.equal(canViewArtist("BOOKING_AGENT", false), false);
+});
+
+test("bootstrap das organizações entrega o papel efetivo do Booking ao frontend", async () => {
+  const [route, shell] = await Promise.all([
+    readFile(new URL("../app/api/organizations/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/bookstage-app.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /m\.role='SALES'/);
+  assert.match(route, /m\.professional_role='BOOKING_AGENT'/);
+  assert.match(route, /THEN 'BOOKING_AGENT'/);
+  assert.match(route, /AS role/);
+  assert.match(route, /private, no-store/);
+  assert.match(shell, /fetchJson/);
+  assert.match(shell, /"\/api\/organizations", \{ cache: "no-store" \}/);
+  assert.match(shell, /requestOrganizations/);
 });
 test("agenda exige atribuição e Booking Agent não ganha acesso global implícito", () => {
   assert.equal(canViewCalendar("BOOKING_AGENT", true), true);
@@ -232,6 +248,68 @@ test("Owner cria credencial de Booking com artistas do próprio tenant", async (
   assert.match(auth, /PBKDF2/);
   assert.match(component, /Adicionar Booking/);
   assert.match(component, /type="password"/);
+});
+
+test("usuário global existente recebe nova membership sem duplicar login", async () => {
+  const [route, schema, component] = await Promise.all([
+    readFile(
+      new URL(
+        "../app/api/organizations/[id]/members/route.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/components/team-module.tsx", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  assert.match(schema, /uniqueIndex\("idx_users_email"\)/);
+  assert.match(
+    schema,
+    /primaryKey\(\{ columns: \[table\.organizationId, table\.userId\] \}\)/,
+  );
+  assert.match(route, /const existingUser = await/);
+  assert.match(route, /existingMembership/);
+  assert.match(route, /Este usuário já faz parte desta organização/);
+  assert.match(route, /userId = existingUser\?\.id \|\| crypto\.randomUUID\(\)/);
+  assert.match(route, /reusedUser: Boolean\(existingUser\)/);
+  assert.doesNotMatch(route, /Este e-mail já possui um acesso no BookStage/);
+  assert.match(component, /senha atual será preservada/);
+});
+
+test("um único usuário pode possuir memberships em três organizações sem duplicação", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+    CREATE TABLE organizations (id TEXT PRIMARY KEY);
+    CREATE TABLE memberships (
+      organization_id TEXT NOT NULL REFERENCES organizations(id),
+      user_id TEXT NOT NULL REFERENCES users(id),
+      role TEXT NOT NULL,
+      PRIMARY KEY (organization_id,user_id)
+    );
+    INSERT INTO users VALUES ('joao','joao@email.com');
+    INSERT INTO organizations VALUES ('empresa-a'),('empresa-b'),('empresa-c');
+    INSERT INTO memberships VALUES
+      ('empresa-a','joao','SALES'),
+      ('empresa-b','joao','SALES'),
+      ('empresa-c','joao','SALES');
+  `);
+  assert.equal(
+    database.prepare("SELECT count(*) AS total FROM users").get()!.total,
+    1,
+  );
+  assert.equal(
+    database.prepare("SELECT count(*) AS total FROM memberships").get()!.total,
+    3,
+  );
+  assert.throws(() =>
+    database.exec("INSERT INTO memberships VALUES ('empresa-a','joao','SALES')"),
+  );
+  database.close();
 });
 
 test("equipe separa membros internos de Booking e permite gestão segura", async () => {

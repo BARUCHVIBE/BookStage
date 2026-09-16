@@ -22,7 +22,7 @@ export async function requireActiveMembership() {
       ),
     } as const;
   const membership = await env.DB.prepare(
-    `SELECT role AS baseRole,professional_role AS professionalRole,department,artist_access_scope AS artistAccessScope,status FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE'`,
+    `SELECT role AS baseRole,professional_role AS professionalRole,department,artist_access_scope AS artistAccessScope,status FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE' AND EXISTS (SELECT 1 FROM organizations WHERE organizations.id=memberships.organization_id AND organizations.status='ACTIVE')`,
   )
     .bind(organizationId, user.id)
     .first<{

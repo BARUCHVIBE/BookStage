@@ -17,6 +17,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 import { ShowFinance } from "@/app/components/show-finance";
 
 type Status = "CONFIRMED" | "IN_PREPARATION" | "COMPLETED" | "CANCELLED";
@@ -96,9 +97,7 @@ const bytes = (value: number | null) =>
       : `${(value / 1024 / 1024).toFixed(1)} MB`
     : "";
 async function fetchShows() {
-  const response = await fetch("/api/shows"),
-    data = (await response.json()) as { shows?: Item[]; error?: string };
-  return { response, data };
+  return fetchJson<{ shows?: Item[]; error?: string }>("/api/shows");
 }
 
 export function ShowsModule() {
@@ -107,46 +106,44 @@ export function ShowsModule() {
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const { response, data } = await fetchShows();
-    if (response.ok) {
-      setItems(data.shows || []);
+    const result = await fetchShows();
+    if (result.ok) {
+      setItems(result.data?.shows || []);
       setMessage("");
-    } else setMessage(data.error || "Não foi possível carregar os shows.");
+    } else setMessage(result.error || "Não foi possível carregar os shows.");
   }, []);
   useEffect(() => {
     let mounted = true;
-    fetchShows().then(({ response, data }) => {
+    fetchShows().then((result) => {
       if (!mounted) return;
-      if (response.ok) {
-        setItems(data.shows || []);
+      if (result.ok) {
+        setItems(result.data?.shows || []);
         setMessage("");
-      } else setMessage(data.error || "Não foi possível carregar os shows.");
+      } else setMessage(result.error || "Não foi possível carregar os shows.");
     });
     return () => {
       mounted = false;
     };
   }, []);
   async function open(id: string) {
-    const response = await fetch(`/api/shows/${id}`),
-      data = (await response.json()) as DetailData & { error?: string };
-    if (response.ok) {
-      setDetail(data);
+    const result = await fetchJson<DetailData & { error?: string }>(`/api/shows/${id}`);
+    if (result.ok && result.data) {
+      setDetail(result.data);
       setMessage("");
-    } else setMessage(data.error || "Show não encontrado.");
+    } else setMessage(result.error || "Show não encontrado.");
   }
   async function patch(body: Record<string, unknown>) {
     if (!detail) return;
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/shows/${detail.show.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/shows/${detail.show.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível atualizar o show.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível atualizar o show.");
       return;
     }
     await load();
@@ -162,15 +159,14 @@ export function ShowsModule() {
     setMessage("");
     const form = new FormData();
     form.set("file", file);
-    const response = await fetch(`/api/shows/${detail.show.id}/files/${kind}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/shows/${detail.show.id}/files/${kind}`, {
         method: "POST",
         body: form,
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
     event.target.value = "";
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível enviar o documento.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível enviar o documento.");
       return;
     }
     setMessage(

@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 const initial = {
   name: "",
@@ -16,6 +17,7 @@ const initial = {
   estimatedAudience: "",
   budget: "",
   notes: "",
+  document: "",
   website: "",
 };
 
@@ -24,11 +26,13 @@ export function RequestShowButton({
   artistSlug,
   artistName,
   referralToken,
+  bookingCode,
 }: {
   organizationSlug: string;
   artistSlug: string;
   artistName: string;
   referralToken?: string;
+  bookingCode?: string;
 }) {
   const [open, setOpen] = useState(false),
     [form, setForm] = useState(initial),
@@ -52,21 +56,25 @@ export function RequestShowButton({
     event.preventDefault();
     setSending(true);
     setError("");
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string; message?: string }>(
         `/api/public/catalog/${organizationSlug}/${artistSlug}/requests`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...form, submittedAt, referralToken }),
+          body: JSON.stringify({
+            ...form,
+            submittedAt,
+            referralToken,
+            bookingCode,
+          }),
         },
-      ),
-      data = (await response.json()) as { error?: string; message?: string };
+      );
     setSending(false);
-    if (!response.ok) {
-      setError(data.error || "Não foi possível enviar sua solicitação.");
+    if (!result.ok) {
+      setError(result.error || "Não foi possível enviar sua solicitação.");
       return;
     }
-    setSuccess(data.message || "Solicitação enviada.");
+    setSuccess(result.data?.message || "Solicitação enviada.");
     setForm(initial);
   }
   const field = (
@@ -142,6 +150,7 @@ export function RequestShowButton({
                   {field("companyName", "Empresa")}
                   {field("phone", "WhatsApp", true, "tel", "(11) 99999-9999")}
                   {field("email", "E-mail", true, "email", "voce@empresa.com")}
+                  {field("document", "CPF/CNPJ opcional")}
                   {field("eventDate", "Data do evento", true, "date")}
                   {field("city", "Cidade", true)}
                   {field("state", "Estado", true, "text", "UF")}

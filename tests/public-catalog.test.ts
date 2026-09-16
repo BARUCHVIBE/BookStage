@@ -144,4 +144,8 @@ test("catálogo sobrepõe o header ao hero e padroniza somente o painel dos card
     /\.public-artist-card \{[^}]*grid-template-rows:/,
   );
   assert.doesNotMatch(css, /maridao-70/i);
+  assert.match(
+    css,
+    /\.public-artist-card p \{[^}]*var\(--public-card-primary-ink/,
+  );
 });

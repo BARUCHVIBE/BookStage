@@ -6,6 +6,7 @@ import {
   requireArtistCalendarAccess,
 } from "@/app/lib/calendar-access";
 import {
+  bookingVisibleCalendarTitle,
   canViewCalendarInternalNotes,
   canViewCalendarStatuses,
   isBlockingStatus,
@@ -81,8 +82,17 @@ export async function GET(request: Request) {
   )
     .bind(...bindings)
     .all();
+  const entries =
+    context.membership.role === "BOOKING_AGENT"
+      ? result.results.map((entry) => ({
+          ...entry,
+          title: bookingVisibleCalendarTitle(
+            String((entry as { title?: unknown }).title ?? ""),
+          ),
+        }))
+      : result.results;
   return Response.json({
-    entries: result.results,
+    entries,
     canCreate: context.membership.role !== "FINANCE",
     canViewInternalNotes,
     canViewStatuses,
@@ -132,7 +142,7 @@ export async function POST(request: Request) {
       input.startDatetime,
       input.endDatetime,
     );
-    if (conflict) return conflictResponse(conflict);
+    if (conflict) return conflictResponse(conflict, context.membership.role);
   }
   const id = crypto.randomUUID();
   try {
@@ -161,7 +171,7 @@ export async function POST(request: Request) {
         input.startDatetime,
         input.endDatetime,
       );
-      if (conflict) return conflictResponse(conflict);
+      if (conflict) return conflictResponse(conflict, context.membership.role);
     }
     throw error;
   }

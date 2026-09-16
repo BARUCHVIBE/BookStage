@@ -2,13 +2,15 @@
 
 import {
   ArrowLeft,
+  ArrowRight,
   Building2,
   CalendarCheck2,
   CalendarDays,
-  ChevronDown,
-  CircleDollarSign,
   FileText,
   Handshake,
+  Inbox,
+  ListChecks,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -18,20 +20,38 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  WalletCards,
   Users,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarModule } from "@/app/components/calendar-module";
 import { CatalogManager } from "@/app/components/catalog-manager";
+import { CommercialCatalog } from "@/app/components/commercial-catalog";
+import { CommercialRequestsModule } from "@/app/components/commercial-requests-module";
 import { CrmModule } from "@/app/components/crm-module";
 import { ContractsModule } from "@/app/components/contracts-module";
 import { ShowsModule } from "@/app/components/shows-module";
+import { RoleWorkQueue } from "@/app/components/role-work-queue";
 import { DashboardModule } from "@/app/components/dashboard-module";
 import { TeamModule } from "@/app/components/team-module";
 import { OrganizationThemeProvider } from "@/app/components/organization-theme-provider";
 import { AppearanceSelector } from "@/app/components/appearance-selector";
+import { AccountSecurity } from "@/app/components/account-security";
 import { SettingsModule } from "@/app/features/settings/branding/settings-module";
+import {
+  PlatformBrand,
+  PlatformWatermark,
+} from "@/app/components/platform-brand";
+import { fetchJson } from "@/app/lib/http-client";
+import { BRANDING_ASSET_ASPECT_RATIOS } from "@/app/lib/branding-assets";
+import {
+  navigationForRole,
+  type NavigationIcon,
+  type NavigationScreen,
+} from "@/app/lib/navigation";
+import type { Role } from "@/app/lib/tenant";
+import { resolveInitialWorkspace } from "@/app/lib/workspace-selection";
 
 type Org = {
   id: string;
@@ -60,12 +80,22 @@ type Member = {
   salesCount?: number;
   commissionAmount?: number;
 };
+type PrimaryCommercial = {
+  artistId: string;
+  organizationId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: "OWNER" | "MANAGER" | "SALES";
+};
 type Artist = {
   id: string;
   name: string;
   status: string;
   primaryUserId?: string | null;
   primaryUserName?: string | null;
+  primaryCommercial?: PrimaryCommercial | null;
+  requiresPrimaryCommercial?: boolean;
   authorizedCount: number;
 };
 type PublicArtistFields = {
@@ -88,20 +118,11 @@ type PublicArtistFields = {
 };
 type ArtistDetail = {
   artist: PublicArtistFields;
+  primaryCommercial: PrimaryCommercial | null;
   assignments: Array<Member & { isPrimary: number }>;
   bookingCollaborators: Array<Pick<Member, "id" | "name" | "email" | "status">>;
   canManageAssignments: boolean;
 };
-type Screen =
-  | "dashboard"
-  | "artists"
-  | "agenda"
-  | "catalog"
-  | "crm"
-  | "contracts"
-  | "shows"
-  | "team"
-  | "settings";
 const blank = {
   name: "",
   email: "",
@@ -112,16 +133,27 @@ const blank = {
   logo: "",
   description: "",
 };
-const futureModules = [["Financeiro", CircleDollarSign]] as const;
+const navigationIcons: Record<NavigationIcon, typeof LayoutDashboard> = {
+  dashboard: LayoutDashboard,
+  artists: Music2,
+  agenda: CalendarDays,
+  crm: Handshake,
+  requests: Inbox,
+  contracts: FileText,
+  shows: CalendarCheck2,
+  booking: Sparkles,
+  team: Users,
+  settings: Settings,
+  workQueue: ListChecks,
+  analysis: ShieldCheck,
+  receipts: WalletCards,
+};
+
+function roleHome(role: string): NavigationScreen {
+  return ["SALES", "FINANCE"].includes(role) ? "workQueue" : "dashboard";
+}
 function Brand() {
-  return (
-    <div className="brand">
-      <span className="brand-mark">
-        B<span />
-      </span>
-      <b>BookStage</b>
-    </div>
-  );
+  return <PlatformBrand />;
 }
 
 export function BookStageApp({
@@ -133,11 +165,14 @@ export function BookStageApp({
     [active, setActive] = useState<Org | null>(null),
     [members, setMembers] = useState<Member[]>([]),
     [artists, setArtists] = useState<Artist[]>([]);
-  const [screen, setScreen] = useState<Screen>("dashboard"),
+  const [screen, setScreen] = useState<NavigationScreen>("dashboard"),
     [selectedArtist, setSelectedArtist] = useState<ArtistDetail | null>(null),
     [responsibleFilter, setResponsibleFilter] = useState(""),
     [newArtistName, setNewArtistName] = useState(""),
-    [agendaArtistId, setAgendaArtistId] = useState("");
+    [newArtistPrimaryUserId, setNewArtistPrimaryUserId] = useState(""),
+    [agendaArtistId, setAgendaArtistId] = useState(""),
+    [crmInitialArtistId, setCrmInitialArtistId] = useState(""),
+    [crmInitialOpportunityId, setCrmInitialOpportunityId] = useState("");
   const [primaryUserId, setPrimaryUserId] = useState(""),
     [authorizedUserIds, setAuthorizedUserIds] = useState<string[]>([]),
     [canManageAssignments, setCanManageAssignments] = useState(false),
@@ -145,56 +180,123 @@ export function BookStageApp({
   const [editing, setEditing] = useState(false),
     [formOpen, setFormOpen] = useState(false),
     [menuOpen, setMenuOpen] = useState(false),
+    [openingOrganization, setOpeningOrganization] = useState<Org | null>(null),
     [form, setForm] = useState(blank),
     [loading, setLoading] = useState(true),
     [notice, setNotice] = useState("");
+  const requestOrganizations = useCallback(
+    () =>
+      fetchJson<{
+      organizations?: Org[];
+      activeOrganizationId?: string | null;
+      }>("/api/organizations", { cache: "no-store" }),
+    [],
+  );
   const loadOrganizations = useCallback(async () => {
-    const r = await fetch("/api/organizations"),
-      d = (await r.json()) as { organizations?: Org[] };
+    const result = await requestOrganizations();
+    if (!result.ok) {
+      setNotice(result.error || "Não foi possível carregar seus ambientes.");
+      return null;
+    }
+    const d = result.data || {};
     setOrganizations(d.organizations || []);
-    setLoading(false);
-  }, []);
+    return d;
+  }, [requestOrganizations]);
   const loadArtists = useCallback(async (filter = "") => {
     const suffix = filter ? `?responsibleId=${encodeURIComponent(filter)}` : "",
-      r = await fetch(`/api/artists${suffix}`),
-      d = (await r.json()) as {
+      result = await fetchJson<{
         artists?: Artist[];
         canManageAssignments?: boolean;
-      };
-    if (r.ok) {
-      setArtists(d.artists || []);
-      setCanManageAssignments(Boolean(d.canManageAssignments));
+      }>(`/api/artists${suffix}`, { cache: "no-store" });
+    if (result.ok) {
+      setArtists(result.data?.artists || []);
+      setCanManageAssignments(Boolean(result.data?.canManageAssignments));
+    } else {
+      setNotice(result.error || "Não foi possível carregar os artistas.");
     }
   }, []);
   useEffect(() => {
-    fetch("/api/organizations")
-      .then((r) => r.json() as Promise<{ organizations?: Org[] }>)
-      .then((d) => {
-        setOrganizations(d.organizations || []);
-        setLoading(false);
+    let cancelled = false;
+    void requestOrganizations()
+      .then(async (result) => {
+        if (cancelled) return;
+        if (!result.ok) {
+          setNotice(
+            result.error || "Não foi possível carregar seus ambientes.",
+          );
+          return;
+        }
+        const data = result.data || {};
+        const available = data.organizations || [],
+          initial = resolveInitialWorkspace(
+            available,
+            data.activeOrganizationId,
+          );
+        setOrganizations(available);
+        if (!initial.organization) return;
+        setOpeningOrganization(initial.organization);
+        if (initial.needsActivation) {
+          const response = await fetchJson("/api/active-organization", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ organizationId: initial.organization.id }),
+          });
+          if (!response.ok || cancelled) {
+            if (!cancelled) setNotice(response.error || "Não foi possível abrir esta organização.");
+            return;
+          }
+        }
+        if (!cancelled) {
+          setActive(initial.organization);
+          setScreen(roleHome(initial.organization.role));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setOpeningOrganization(null);
+          setLoading(false);
+        }
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [requestOrganizations]);
   useEffect(() => {
+    let cancelled = false;
     if (active) {
-      fetch(`/api/organizations/${active.id}/members`)
-        .then((r) => r.json() as Promise<{ members?: Member[] }>)
-        .then((d) => setMembers(d.members || []));
+      if (["OWNER", "MANAGER"].includes(active.role))
+        fetchJson<{ members?: Member[] }>(
+          `/api/organizations/${active.id}/members`,
+        ).then((result) => {
+            if (!cancelled && result.ok)
+              setMembers(result.data?.members || []);
+          });
+      else
+        Promise.resolve().then(() => {
+          if (!cancelled) setMembers([]);
+        });
       const suffix = responsibleFilter
         ? `?responsibleId=${encodeURIComponent(responsibleFilter)}`
         : "";
-      fetch(`/api/artists${suffix}`)
-        .then(
-          (r) =>
-            r.json() as Promise<{
-              artists?: Artist[];
-              canManageAssignments?: boolean;
-            }>,
-        )
-        .then((d) => {
-          setArtists(d.artists || []);
-          setCanManageAssignments(Boolean(d.canManageAssignments));
+      fetchJson<{
+        artists?: Artist[];
+        canManageAssignments?: boolean;
+      }>(`/api/artists${suffix}`, { cache: "no-store" }).then((result) => {
+          if (cancelled) return;
+          if (result.ok) {
+            setArtists(result.data?.artists || []);
+            setCanManageAssignments(
+              Boolean(result.data?.canManageAssignments),
+            );
+          } else {
+            setArtists([]);
+            setNotice(result.error || "Não foi possível carregar os artistas.");
+          }
         });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [active, responsibleFilter]);
   async function saveOrganization(e: React.FormEvent) {
     e.preventDefault();
@@ -202,14 +304,13 @@ export function BookStageApp({
         editing && active
           ? `/api/organizations/${active.id}`
           : "/api/organizations",
-      r = await fetch(url, {
+      result = await fetchJson<{ error?: string; organization?: Org }>(url, {
         method: editing ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(form),
-      }),
-      d = (await r.json()) as { error?: string; organization?: Org };
-    if (!r.ok) {
-      setNotice(d.error || "Não foi possível salvar.");
+      });
+    if (!result.ok) {
+      setNotice(result.error || "Não foi possível salvar.");
       return;
     }
     setNotice(editing ? "Organização atualizada." : "Organização criada.");
@@ -217,22 +318,92 @@ export function BookStageApp({
     setFormOpen(false);
     setForm(blank);
     await loadOrganizations();
-    if (d.organization) await chooseOrganization(d.organization);
+    if (result.data?.organization)
+      await chooseOrganization(result.data.organization);
   }
   async function chooseOrganization(org: Org) {
-    const r = await fetch("/api/active-organization", {
+    if (!org || openingOrganization) return;
+    const previous = active;
+    setOpeningOrganization(org);
+    setActive(null);
+    setMenuOpen(false);
+    setMembers([]);
+    setArtists([]);
+    const result = await fetchJson<{ error?: string }>(
+      "/api/active-organization",
+      {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ organizationId: org.id }),
-    });
-    if (r.ok) {
+      },
+    );
+    if (result.ok) {
       setActive(org);
-      setScreen("dashboard");
+      setScreen(roleHome(org.role));
       setSelectedArtist(null);
       setAgendaArtistId("");
       setNotice("");
       setResponsibleFilter("");
+    } else {
+      setActive(previous);
+      setNotice(result.error || "Não foi possível abrir esta organização.");
     }
+    setOpeningOrganization(null);
+  }
+  async function openCommercialNegotiation(
+    organizationId: string,
+    artistId: string,
+  ) {
+    const organization = organizations.find(
+      (item) => item.id === organizationId,
+    );
+    if (!organization) return;
+    const activation = await fetchJson<{ error?: string }>(
+      "/api/active-organization",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId }),
+      },
+    );
+    if (!activation.ok) {
+      setNotice(activation.error || "Não foi possível abrir esta organização.");
+      return;
+    }
+    setArtists([]);
+    setMembers([]);
+    setResponsibleFilter("");
+    setActive(organization);
+    setCrmInitialArtistId(artistId);
+    setCrmInitialOpportunityId("");
+    setScreen("crm");
+    setSelectedArtist(null);
+  }
+  async function openRequestOpportunity(
+    organizationId: string,
+    opportunityId: string,
+  ) {
+    const organization = organizations.find((item) => item.id === organizationId);
+    if (!organization) return;
+    const activation = await fetchJson<{ error?: string }>(
+      "/api/active-organization",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId }),
+      },
+    );
+    if (!activation.ok) {
+      setNotice(activation.error || "Não foi possível abrir esta organização.");
+      return;
+    }
+    setArtists([]);
+    setMembers([]);
+    setResponsibleFilter("");
+    setActive(organization);
+    setCrmInitialArtistId("");
+    setCrmInitialOpportunityId(opportunityId);
+    setScreen("crm");
   }
   function editOrganization() {
     if (!active) return;
@@ -255,28 +426,38 @@ export function BookStageApp({
   }
   async function createArtist(e: React.FormEvent) {
     e.preventDefault();
-    const r = await fetch("/api/artists", {
+    const result = await fetchJson<{ error?: string; artist?: Artist }>(
+      "/api/artists",
+      {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: newArtistName }),
-      }),
-      d = (await r.json()) as { error?: string; artist?: Artist };
-    if (!r.ok) {
-      setArtistNotice(d.error || "Não foi possível criar o artista.");
+        body: JSON.stringify({
+          name: newArtistName,
+          primaryUserId: newArtistPrimaryUserId,
+        }),
+      },
+    );
+    if (!result.ok) {
+      setArtistNotice(result.error || "Não foi possível criar o artista.");
       return;
     }
     setNewArtistName("");
+    setNewArtistPrimaryUserId("");
     setArtistNotice("Artista criado.");
     await loadArtists(responsibleFilter);
-    if (d.artist) await openArtist(d.artist.id);
+    if (result.data?.artist) await openArtist(result.data.artist.id);
   }
   async function openArtist(id: string) {
-    const r = await fetch(`/api/artists/${id}`),
-      d = (await r.json()) as ArtistDetail;
-    if (!r.ok) return;
+    const result = await fetchJson<ArtistDetail>(`/api/artists/${id}`, {
+      cache: "no-store",
+    });
+    if (!result.ok || !result.data) {
+      setArtistNotice(result.error || "Não foi possível carregar o artista.");
+      return;
+    }
+    const d = result.data;
     setSelectedArtist(d);
-    const primary = d.assignments.find((item) => Boolean(item.isPrimary));
-    setPrimaryUserId(primary?.id || "");
+    setPrimaryUserId(d.primaryCommercial?.userId || "");
     setAuthorizedUserIds(
       d.assignments.filter((item) => !item.isPrimary).map((item) => item.id),
     );
@@ -284,7 +465,7 @@ export function BookStageApp({
   }
   async function saveAssignments() {
     if (!selectedArtist) return;
-    const r = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         `/api/artists/${selectedArtist.artist.id}/sales-team`,
         {
           method: "PUT",
@@ -294,10 +475,11 @@ export function BookStageApp({
             authorizedUserIds,
           }),
         },
-      ),
-      d = (await r.json()) as { error?: string };
-    if (!r.ok) {
-      setArtistNotice(d.error || "Não foi possível salvar as atribuições.");
+      );
+    if (!result.ok) {
+      setArtistNotice(
+        result.error || "Não foi possível salvar as atribuições.",
+      );
       return;
     }
     setArtistNotice("Equipe comercial atualizada.");
@@ -310,6 +492,21 @@ export function BookStageApp({
         ? current.filter((id) => id !== userId)
         : [...current, userId],
     );
+  }
+  function openNavigation(destination: NavigationScreen) {
+    if (destination === "agenda") {
+      setResponsibleFilter("");
+      setAgendaArtistId("");
+    }
+    setScreen(destination);
+    setSelectedArtist(null);
+    setMenuOpen(false);
+  }
+  function openQueueOpportunity(opportunityId: string) {
+    setCrmInitialArtistId("");
+    setCrmInitialOpportunityId(opportunityId);
+    setScreen("crm");
+    setSelectedArtist(null);
   }
   const commercialMembers = members.filter(
     (member) =>
@@ -339,11 +536,30 @@ export function BookStageApp({
         notice={notice}
       />
     );
+  if (!active)
+    return (
+      <OrganizationThemeProvider organizationId={null} userId={user.id}>
+        <OrganizationSelection
+          user={user}
+          organizations={organizations}
+          openingOrganization={openingOrganization}
+          notice={notice}
+          choose={chooseOrganization}
+          logout={logout}
+          createOrganization={() => {
+            setForm(blank);
+            setEditing(false);
+            setFormOpen(true);
+          }}
+        />
+      </OrganizationThemeProvider>
+    );
   return (
     <OrganizationThemeProvider
-      key={active?.id ?? "bookstage-default"}
-      organizationId={active?.id ?? null}
+      key={active.id}
+      organizationId={active.id}
       userId={user.id}
+      fallback={<WorkspaceOpening organization={active} />}
     >
       <div className="app-shell">
       <button
@@ -372,139 +588,55 @@ export function BookStageApp({
           </button>
         </div>
         <div className="sidebar-org">
-          <div className={`org-avatar ${active?.logo ? "has-logo" : ""}`}>
-            {active?.logo ? (
+          <div className={`org-avatar ${active.logo ? "has-logo" : ""}`}>
+            {active.logo ? (
               // eslint-disable-next-line @next/next/no-img-element -- organization assets may be served by R2 or an existing HTTPS URL.
               <img src={active.logo} alt={`Logo de ${active.name}`} />
             ) : (
-              (active?.name[0] ?? organizations[0]?.name[0])
+              active.name[0]
             )}
           </div>
           <div>
-            <small>Organização</small>
-            <strong>{active?.name ?? "Selecione o ambiente"}</strong>
+            <small>Workspace</small>
+            <strong>{active.name}</strong>
           </div>
-          <ChevronDown size={16} />
         </div>
         <nav aria-label="Navegação principal">
-          <button
-            className={screen === "dashboard" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("dashboard");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <LayoutDashboard />
-            <span>Visão geral</span>
-          </button>
-          <button
-            className={screen === "artists" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("artists");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <Music2 />
-            <span>Artistas</span>
-          </button>
-          <button
-            className={screen === "agenda" ? "nav-active" : ""}
-            onClick={() => {
-              setResponsibleFilter("");
-              setAgendaArtistId("");
-              setScreen("agenda");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <CalendarDays />
-            <span>Agenda</span>
-          </button>
-          <button
-            className={screen === "crm" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("crm");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <Handshake />
-            <span>CRM</span>
-          </button>
-          <button
-            className={screen === "contracts" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("contracts");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <FileText />
-            <span>Contratos</span>
-          </button>
-          <button
-            className={screen === "shows" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("shows");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <CalendarCheck2 />
-            <span>Shows</span>
-          </button>
-          <button
-            className={screen === "catalog" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("catalog");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <Sparkles />
-            <span>Catálogo público</span>
-          </button>
-          <button
-            className={screen === "team" ? "nav-active" : ""}
-            onClick={() => {
-              setScreen("team");
-              setSelectedArtist(null);
-              setMenuOpen(false);
-            }}
-          >
-            <Users />
-            <span>Equipe</span>
-          </button>
-          {active && ["OWNER", "MANAGER"].includes(active.role) && (
-            <button
-              className={screen === "settings" ? "nav-active" : ""}
-              onClick={() => {
-                setScreen("settings");
-                setSelectedArtist(null);
-                setMenuOpen(false);
-              }}
-            >
-              <Settings />
-              <span>Configurações</span>
-            </button>
-          )}
-          <p className="nav-label">Próximos módulos</p>
-          {futureModules.map(([label, Icon]) => (
-            <button disabled key={label}>
-              <Icon />
-              <span>{label}</span>
-              <small>Em breve</small>
-            </button>
-          ))}
+          {navigationForRole(active.role as Role).map((item) => {
+            const Icon = navigationIcons[item.icon];
+            return (
+              <button
+                key={item.capability}
+                className={screen === item.destination ? "nav-active" : ""}
+                aria-label={item.label}
+                title={item.label}
+                onClick={() => openNavigation(item.destination)}
+              >
+                <Icon />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
         </nav>
         <div className="sidebar-user">
           <div className="avatar">{user.name[0]}</div>
-          <div>
+          <button
+            className="sidebar-user-account"
+            aria-label="Abrir segurança da conta"
+            title="Segurança da conta"
+            onClick={() => openNavigation("account")}
+          >
             <b>{user.name}</b>
             <small>{user.email}</small>
-          </div>
+          </button>
+          <button
+            className="logout-button"
+            aria-label="Segurança da conta"
+            title="Segurança da conta"
+            onClick={() => openNavigation("account")}
+          >
+            <KeyRound size={17} />
+          </button>
           <button
             className="logout-button"
             aria-label="Sair"
@@ -523,16 +655,13 @@ export function BookStageApp({
               <Building2 size={16} />
               <select
                 aria-label="Organização ativa"
-                value={active?.id || ""}
+                value={active.id}
                 onChange={(e) =>
                   chooseOrganization(
                     organizations.find((o) => o.id === e.target.value)!,
                   )
                 }
               >
-                <option value="" disabled>
-                  Selecione uma organização
-                </option>
                 {organizations.map((o) => (
                   <option value={o.id} key={o.id}>
                     {o.name}
@@ -557,35 +686,56 @@ export function BookStageApp({
           </div>
         </header>
         <div className="page-content">
-          {!active ? (
-            <OrganizationEmpty
-              organizations={organizations}
-              choose={chooseOrganization}
+          <PlatformWatermark />
+          {screen === "workQueue" || screen === "financeAnalysis" || screen === "receipts" ? (
+            <RoleWorkQueue
+              key={`${active.id}:${screen}`}
+              role={active.role}
+              initialView={screen === "receipts" ? "receipts" : screen === "financeAnalysis" ? "analysis" : "queue"}
+              onOpenOpportunity={openQueueOpportunity}
             />
           ) : screen === "crm" ? (
-            <CrmModule key={active.id} artists={artists} />
+            <CrmModule
+              key={`${active.id}:${crmInitialArtistId}:${crmInitialOpportunityId}`}
+              artists={artists}
+              initialArtistId={crmInitialArtistId}
+              startCreating={Boolean(crmInitialArtistId)}
+              initialOpportunityId={crmInitialOpportunityId}
+            />
+          ) : screen === "requests" ? (
+            <CommercialRequestsModule onOpenOpportunity={openRequestOpportunity} />
           ) : screen === "contracts" ? (
-            <ContractsModule key={active.id} />
+            <ContractsModule key={active.id} role={active.role} />
           ) : screen === "shows" ? (
             <ShowsModule key={active.id} />
           ) : screen === "catalog" ? (
-            <CatalogManager
-              key={active.id}
-              organization={active}
-              artists={artists}
-              canManage={canManageAssignments}
-            />
+            active.role === "BOOKING_AGENT" ? (
+              <CommercialCatalog
+                key={user.id}
+                onCreateNegotiation={openCommercialNegotiation}
+              />
+            ) : (
+              <CatalogManager
+                key={active.id}
+                organization={active}
+                artists={artists}
+                canManage={canManageAssignments}
+              />
+            )
           ) : screen === "team" ? (
             <TeamModule
               key={active.id}
               organizationId={active.id}
               onMembersChanged={() =>
-                fetch(`/api/organizations/${active.id}/members`)
-                  .then(
-                    (response) =>
-                      response.json() as Promise<{ members?: Member[] }>,
-                  )
-                  .then((data) => setMembers(data.members || []))
+                fetchJson<{ members?: Member[] }>(
+                  `/api/organizations/${active.id}/members`,
+                ).then((result) => {
+                  if (result.ok) setMembers(result.data?.members || []);
+                  else
+                    setNotice(
+                      result.error || "Não foi possível atualizar a equipe.",
+                    );
+                })
               }
             />
           ) : screen === "settings" ? (
@@ -610,6 +760,8 @@ export function BookStageApp({
                 );
               }}
             />
+          ) : screen === "account" ? (
+            <AccountSecurity email={user.email} />
           ) : screen === "agenda" ? (
             <CalendarModule
               key={active.id}
@@ -626,6 +778,8 @@ export function BookStageApp({
               canManage={canManageAssignments}
               newArtistName={newArtistName}
               setNewArtistName={setNewArtistName}
+              newArtistPrimaryUserId={newArtistPrimaryUserId}
+              setNewArtistPrimaryUserId={setNewArtistPrimaryUserId}
               createArtist={createArtist}
               openArtist={openArtist}
               closeArtist={() => setSelectedArtist(null)}
@@ -657,34 +811,118 @@ export function BookStageApp({
   );
 }
 
-function OrganizationEmpty({
+const roleLabels: Record<string, string> = {
+  OWNER: "Owner",
+  MANAGER: "Gestão",
+  SALES: "Comercial",
+  BOOKING_AGENT: "Booking",
+  PRODUCTION: "Produção",
+  FINANCE: "Financeiro",
+};
+
+function WorkspaceOpening({ organization }: { organization: Org }) {
+  return (
+    <main className="workspace-opening" aria-live="polite" aria-busy="true">
+      <PlatformWatermark />
+      <span className="spinner" />
+      <div>
+        <strong>Abrindo {organization.name}...</strong>
+        <small>Carregando permissões e identidade visual.</small>
+      </div>
+    </main>
+  );
+}
+
+function OrganizationSelection({
+  user,
   organizations,
+  openingOrganization,
+  notice,
   choose,
+  logout,
+  createOrganization,
 }: {
+  user: { name: string; email: string };
   organizations: Org[];
+  openingOrganization: Org | null;
+  notice: string;
   choose: (org: Org) => void;
+  logout: () => void;
+  createOrganization: () => void;
 }) {
   return (
-    <section className="empty-state">
-      <div className="empty-icon">
-        <Building2 />
-      </div>
-      <p className="eyebrow">Fundação pronta</p>
-      <h1>Seu palco operacional começa por aqui.</h1>
-      <p>
-        Escolha a organização ativa para acessar o ambiente isolado da sua
-        equipe.
-      </p>
-      <div className="org-grid">
-        {organizations.map((o) => (
-          <button key={o.id} onClick={() => choose(o)}>
-            <span>{o.name[0]}</span>
-            <b>{o.name}</b>
-            <small>{o.role}</small>
+    <div className="organization-selection-shell">
+      <header className="organization-selection-header">
+        <Brand />
+        <div className="organization-selection-actions">
+          <AppearanceSelector />
+          <div className="selection-user">
+            <span className="avatar">{user.name[0]}</span>
+            <div>
+              <b>{user.name}</b>
+              <small>{user.email}</small>
+            </div>
+          </div>
+          <button
+            className="selection-logout"
+            aria-label="Sair"
+            title="Sair"
+            onClick={logout}
+          >
+            <LogOut size={18} />
           </button>
-        ))}
-      </div>
-    </section>
+        </div>
+      </header>
+      <main className="organization-selection-main">
+        <PlatformWatermark />
+        <section className="organization-selection-intro">
+          <div className="empty-icon">
+            <Building2 />
+          </div>
+          <p className="eyebrow">Seleção de organização</p>
+          <h1>Bem-vindo(a) ao BookBusiness</h1>
+          <p>Selecione o ambiente que deseja acessar.</p>
+        </section>
+        {notice && <p className="notice selection-notice">{notice}</p>}
+        <section className="organization-card-grid" aria-label="Suas organizações">
+          {organizations.map((organization) => {
+            const opening = openingOrganization?.id === organization.id;
+            return (
+              <button
+                className="organization-choice-card"
+                key={organization.id}
+                disabled={Boolean(openingOrganization)}
+                aria-busy={opening}
+                onClick={() => choose(organization)}
+              >
+                <span
+                  className={`organization-card-logo ${organization.logo ? "has-logo" : ""}`}
+                >
+                  {organization.logo ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- tenant logos can be served by private R2-backed routes.
+                    <img src={organization.logo} alt="" />
+                  ) : (
+                    organization.name[0]
+                  )}
+                </span>
+                <span className="organization-card-copy">
+                  <b>{organization.name}</b>
+                  <small>{roleLabels[organization.role] || organization.role}</small>
+                </span>
+                <span className="organization-card-action" aria-hidden="true">
+                  {opening ? <span className="spinner" /> : <ArrowRight size={18} />}
+                </span>
+                {opening && <small className="organization-opening-label">Abrindo ambiente...</small>}
+              </button>
+            );
+          })}
+        </section>
+        <button className="button button-secondary selection-create" onClick={createOrganization}>
+          <Plus size={16} />
+          Nova organização
+        </button>
+      </main>
+    </div>
   );
 }
 function Dashboard({
@@ -710,6 +948,8 @@ function ArtistsModule(props: {
   canManage: boolean;
   newArtistName: string;
   setNewArtistName: (v: string) => void;
+  newArtistPrimaryUserId: string;
+  setNewArtistPrimaryUserId: (v: string) => void;
   createArtist: (e: React.FormEvent) => void;
   openArtist: (id: string) => void;
   closeArtist: () => void;
@@ -764,6 +1004,13 @@ function ArtistsModule(props: {
             )}
           </div>
           {props.notice && <div className="notice">{props.notice}</div>}
+          {props.selected.artist.status === "ACTIVE" &&
+            !props.selected.primaryCommercial && (
+              <div className="notice notice-warning">
+                Este artista ativo precisa de um responsável comercial
+                principal.
+              </div>
+            )}
           <div className="assignment-grid">
             <label>
               Responsável comercial principal
@@ -773,6 +1020,16 @@ function ArtistsModule(props: {
                 onChange={(e) => props.setPrimaryUserId(e.target.value)}
               >
                 <option value="">Sem responsável principal</option>
+                {props.selected.primaryCommercial &&
+                  !props.members.some(
+                    (member) =>
+                      member.id === props.selected!.primaryCommercial!.userId,
+                  ) && (
+                    <option value={props.selected.primaryCommercial.userId}>
+                      {props.selected.primaryCommercial.name} ·{" "}
+                      {props.selected.primaryCommercial.role}
+                    </option>
+                  )}
                 {props.members.map((member) => (
                   <option key={member.id} value={member.id}>
                     {member.name} · {member.role}
@@ -859,6 +1116,21 @@ function ArtistsModule(props: {
               value={props.newArtistName}
               onChange={(e) => props.setNewArtistName(e.target.value)}
             />
+            <select
+              aria-label="Responsável principal do novo artista"
+              value={props.newArtistPrimaryUserId}
+              onChange={(e) =>
+                props.setNewArtistPrimaryUserId(e.target.value)
+              }
+              required
+            >
+              <option value="">Responsável principal</option>
+              {props.members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
             <button className="button button-primary">
               <Plus size={16} />
               Adicionar artista
@@ -901,7 +1173,11 @@ function ArtistsModule(props: {
               <span>{artist.name[0]}</span>
               <b>{artist.name}</b>
             </div>
-            <span>{artist.primaryUserName || "Não atribuído"}</span>
+            <span>
+              {artist.primaryCommercial?.name ||
+                artist.primaryUserName ||
+                "Não atribuído · ação necessária"}
+            </span>
             <span>{Number(artist.authorizedCount) || 0}</span>
             <em className="status-badge">{artist.status}</em>
             <button
@@ -936,9 +1212,15 @@ function Onboarding({
   cancel: () => void;
   notice: string;
 }) {
-  const field = (key: keyof typeof blank, label: string, placeholder = "") => (
+  const field = (
+    key: keyof typeof blank,
+    label: string,
+    placeholder = "",
+    hint?: string,
+  ) => (
     <label>
       {label}
+      {hint && <small className="image-field-hint">{hint}</small>}
       <input
         value={form[key]}
         placeholder={placeholder}
@@ -999,7 +1281,12 @@ function Onboarding({
         </div>
         {field("website", "Website", "https://")}
         {field("instagram", "Instagram", "@suaempresa")}
-        {field("logo", "URL do logo", "https://...")}
+        {field(
+          "logo",
+          "URL do logo",
+          "https://...",
+          `Proporção recomendada ${BRANDING_ASSET_ASPECT_RATIOS.logo}`,
+        )}
         <div className="form-actions">
           {editing && (
             <button

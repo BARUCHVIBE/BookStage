@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "policy": "Migration files already released or reviewed are immutable. New migrations containing destructive SQL are rejected by CI and require an explicit reviewed lock update.",
+  "files": {
+    "0000_striped_vector.sql": "0bcdd17a6b3222916a882e0ed555d6ca66eac15cb1ed2c804821a927c1a8925d",
+    "0001_shallow_tomorrow_man.sql": "4d557efa55d27e6ce5ad4ff19612cdc1b682d7b94b439a5c9f138c909d89dd2c",
+    "0002_brown_grey_gargoyle.sql": "3f0396b8993a1488b2c011353ad7a9cae759cb5d55c938ebc79a8ba4141a16ce",
+    "0003_black_deathbird.sql": "45deabda826f4fa14b5d1e94a2db9646ab4589aeb1d46d4a8d679437de776e33",
+    "0004_superb_omega_flight.sql": "b0e78bf8d2adac75b8cfb2b3ee1a2d399526d8df52a7744240033880240937b8",
+    "0005_sweet_plazm.sql": "d05d2ffd8cfdb81373a19fc4b842776dd689e075f806c7e01b3661c83147f765",
+    "0006_slow_midnight.sql": "9ba74db78abd475eeb5d22bf3a3641ee2ce258a5aef5d6b7eccfcdd14ecaf2f3",
+    "0007_familiar_lord_hawal.sql": "6b4adf9b56c38cd193b80dfa3d6b0d7cf83124a2c863e2699b488f599750cc01",
+    "0008_gigantic_nitro.sql": "2b044b4cb769f09849ad7130dc0c0510df071de2d1a7c0357bb94c84728e09ac",
+    "0009_worried_tombstone.sql": "72eb0c49dc686b5d9cda88424096d45b048c1f2265e4f51991e671bbe24e9edf",
+    "0010_fixed_radioactive_man.sql": "4e3df3dbb6e2fdaafe74ef8ae16be6d9dc9faefa4c98e386c43c753f08e754a7",
+    "0011_wild_jetstream.sql": "39c1a4727fe2380f74ef5f3e6c479adf231334e6ab75881292b01c2611121d8d",
+    "0012_happy_mac_gargan.sql": "404449dab80d4e34a699294b38f24cc1a5ba6e08be1a86ff07d7b3fc9b650c88",
+    "0013_lowly_lily_hollister.sql": "f2f418dcb999f7ed93ccfbe44093de18088ee50e6296fcbc759372d2c8cfaedc",
+    "0014_yummy_celestials.sql": "63d726b858d6bd437cae1ec5dcd8186313fcd19acf6136f216cc50962d90373b",
+    "0015_huge_iron_fist.sql": "a228c71a410577481aed1a40d2b9d0c363434193ba344957a803166176b78367",
+    "0016_talented_dorian_gray.sql": "13dfcf179c1829ea8e062388089546111e929d36c2d55305504501b9c3306c14",
+    "0017_chilly_rumiko_fujikawa.sql": "36362dd54340814153be44bb3fde8d6a43f7f6e5fdd6cd5d159263fec01034ff",
+    "0018_lyrical_iron_lad.sql": "6bbbf09db40d2b538b0bddca5dbd331ac23a2fdfe482aef67148d292491e6101",
+    "0019_flowery_nico_minoru.sql": "640ed2a4f8c72f0ed7d669ec211734fdd63f3eaacc4378b5750bea17ea568b48",
+    "0020_blue_omega_sentinel.sql": "94c71906d2643dad2e1976ffc2c69d3e974bc3686606df4044710c9c59f10b0a",
+    "0021_backfill_opportunity_commercial_validator.sql": "6ff95623099eb8bd8c918e9109146794d711a33d9aef0f95e2db0220a00bd881",
+    "0022_remove_legacy_commission_triggers.sql": "c5ee9e5251c1e7d00a8cfd3850130cdf97218d61ec73c2855df72ab167c84295",
+    "0023_modern_commission_integrity.sql": "5fc397d69fd84bba4f401f18e08aacea8edf69d408216ea4314649275aa80cd8",
+    "0024_operational_integrity.sql": "a4cf895f1b9efd26cedde1cef91c46262bc698cf9483f34c2ecb607022031f72",
+    "0025_opportunity_receipts.sql": "e710e566ceff027526bdf1f2e02a0b7b29b28cfa69186f7db0e9feef8f8c86f1",
+    "0026_terminal_update_guard.sql": "1069470566dc90d81d958d0e7ad72edce631e7da0c353e3019138080153be169"
+  }
+}

@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 type Status = "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED";
 type Summary = {
@@ -86,37 +87,35 @@ export function OpportunityProposals({
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
   const load = useCallback(async () => {
-    const response = await fetch(
-        `/api/opportunities/${opportunityId}/proposals`,
-      ),
-      data = (await response.json()) as {
+    const result = await fetchJson<{
         proposals?: Summary[];
         error?: string;
-      };
-    if (response.ok) setItems(data.proposals || []);
-    else setMessage(data.error || "Não foi possível carregar as propostas.");
+      }>(`/api/opportunities/${opportunityId}/proposals`);
+    if (result.ok) setItems(result.data?.proposals || []);
+    else setMessage(result.error || "Não foi possível carregar as propostas.");
   }, [opportunityId]);
   useEffect(() => {
     load();
   }, [load]);
   async function open(id: string) {
-    const response = await fetch(`/api/proposals/${id}`),
-      data = (await response.json()) as { proposal?: Proposal; error?: string };
-    if (!response.ok || !data.proposal) {
-      setMessage(data.error || "Proposta não encontrada.");
+    const result = await fetchJson<{ proposal?: Proposal; error?: string }>(`/api/proposals/${id}`);
+    if (!result.ok || !result.data?.proposal) {
+      setMessage(result.error || "Proposta não encontrada.");
       return;
     }
-    setSelected(data.proposal);
+    const data = result.data;
+    const proposal = data.proposal!;
+    setSelected(proposal);
     setCreating(false);
     setMessage("");
     setForm({
-      value: String(data.proposal.value / 100),
-      paymentTerms: data.proposal.payment_terms,
-      transportationTerms: data.proposal.transportation_terms || "",
-      accommodationTerms: data.proposal.accommodation_terms || "",
-      technicalTerms: data.proposal.technical_terms || "",
-      additionalTerms: data.proposal.additional_terms || "",
-      validityDate: data.proposal.validity_date,
+      value: String(proposal.value / 100),
+      paymentTerms: proposal.payment_terms,
+      transportationTerms: proposal.transportation_terms || "",
+      accommodationTerms: proposal.accommodation_terms || "",
+      technicalTerms: proposal.technical_terms || "",
+      additionalTerms: proposal.additional_terms || "",
+      validityDate: proposal.validity_date,
     });
   }
   function payload() {
@@ -125,7 +124,7 @@ export function OpportunityProposals({
   async function create(sourceProposalId?: string) {
     setBusy(true);
     setMessage("");
-    const response = await fetch(
+    const result = await fetchJson<{ id?: string; error?: string }>(
         `/api/opportunities/${opportunityId}/proposals`,
         {
           method: "POST",
@@ -134,31 +133,29 @@ export function OpportunityProposals({
             sourceProposalId ? { sourceProposalId } : payload(),
           ),
         },
-      ),
-      data = (await response.json()) as { id?: string; error?: string };
+      );
     setBusy(false);
-    if (!response.ok || !data.id) {
-      setMessage(data.error || "Não foi possível criar a proposta.");
+    if (!result.ok || !result.data?.id) {
+      setMessage(result.error || "Não foi possível criar a proposta.");
       return;
     }
     setCreating(false);
     await load();
-    await open(data.id);
+    await open(result.data.id);
     await refreshOpportunity();
   }
   async function save() {
     if (!selected) return;
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/proposals/${selected.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/proposals/${selected.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload()),
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível salvar.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível salvar.");
       return;
     }
     setMessage("Rascunho atualizado.");
@@ -169,15 +166,14 @@ export function OpportunityProposals({
     if (!selected) return;
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/proposals/${selected.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/proposals/${selected.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status }),
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível atualizar o status.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível atualizar o status.");
       return;
     }
     await load();
@@ -277,14 +273,17 @@ export function OpportunityProposals({
                   Baixar PDF
                 </a>
                 {!readOnly && selected.status === "DRAFT" && (
-                  <button
-                    className="button button-primary"
-                    onClick={() => changeStatus("SENT")}
-                    disabled={busy}
-                  >
-                    <Send />
-                    Marcar enviada
-                  </button>
+                  <>
+                    <button
+                      className="button button-primary"
+                      onClick={() => changeStatus("SENT")}
+                      disabled={busy}
+                    >
+                      <Send />
+                      Registrar envio externo
+                    </button>
+                    <small>Use após enviar a proposta ao contratante por outro canal.</small>
+                  </>
                 )}
                 {!readOnly && selected.status === "SENT" && (
                   <>

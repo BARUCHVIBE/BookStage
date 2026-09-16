@@ -25,7 +25,7 @@ type Membership = {
 };
 async function viewer(organizationId: string, userId: string) {
   return env.DB.prepare(
-    `SELECT role AS baseRole,professional_role AS professionalRole,status FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE'`,
+    `SELECT role AS baseRole,professional_role AS professionalRole,status FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE' AND EXISTS (SELECT 1 FROM organizations WHERE organizations.id=memberships.organization_id AND organizations.status='ACTIVE')`,
   )
     .bind(organizationId, userId)
     .first<{
@@ -115,6 +115,7 @@ export async function GET(
     links: links.results,
     opportunities,
     commissions: commissions.results,
+    canEditName: user.id === userId && effectiveRole(access.baseRole, access.professionalRole) === "OWNER",
     canManage:
       effectiveRole(access.baseRole, access.professionalRole) === "OWNER",
     canManageLinks: ["OWNER", "MANAGER"].includes(
@@ -173,6 +174,8 @@ export async function PATCH(
         ? body.artistAccessScope
         : previous.artistAccessScope
     ) as ArtistAccessScope;
+  if (user.id !== userId && name !== previous.name)
+    return Response.json({ error: "O nome pertence à conta pessoal e não pode ser alterado por outra organização." }, { status: 403 });
   if (
     !name ||
     name.length > 160 ||
@@ -253,9 +256,9 @@ export async function PATCH(
       toValue: scope,
     });
   const statements = [
-    env.DB.prepare(
+    ...(user.id === userId ? [env.DB.prepare(
       `UPDATE users SET name=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-    ).bind(name, userId),
+    ).bind(name, userId)] : []),
     env.DB.prepare(
       `UPDATE memberships SET role=?,professional_role=?,department=?,artist_access_scope=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE organization_id=? AND user_id=?`,
     ).bind(

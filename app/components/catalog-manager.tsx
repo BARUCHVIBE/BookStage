@@ -4,6 +4,13 @@
 
 import { Save } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AssetUploader } from "@/app/features/settings/branding/asset-uploader";
+import {
+  ARTIST_ASSET_LIMITS,
+  artistAssetHint,
+  type ArtistAssetKind,
+} from "@/app/lib/artist-assets";
+import { fetchJson } from "@/app/lib/http-client";
 
 type Organization = {
   id: string;
@@ -63,22 +70,24 @@ export function CatalogManager({
 }) {
   const [selectedId, setSelectedId] = useState(artists[0]?.id || ""),
     [form, setForm] = useState(emptyArtist),
+    [photoFile, setPhotoFile] = useState<File | null>(null),
+    [coverFile, setCoverFile] = useState<File | null>(null),
     [description, setDescription] = useState(organization.description || ""),
     [notice, setNotice] = useState("");
   useEffect(() => {
     let active = true;
     if (!selectedId) return;
-    fetch(`/api/artists/${selectedId}`)
-      .then(
-        (response) =>
-          response.json() as Promise<{
+    fetchJson<{
             artist?: Partial<ArtistFields> & { name: string };
             error?: string;
-          }>,
-      )
-      .then((data) => {
-        if (!active || !data.artist) return;
-        const artist = data.artist;
+          }>(`/api/artists/${selectedId}`)
+      .then((result) => {
+        if (!active) return;
+        if (!result.ok || !result.data?.artist) {
+          setNotice(result.error || "Não foi possível carregar o artista.");
+          return;
+        }
+        const artist = result.data.artist;
         setForm({
           name: artist.name,
           slug: artist.slug || "",
@@ -95,35 +104,63 @@ export function CatalogManager({
           publicMaterials: artist.publicMaterials || "",
           isPublic: Boolean(artist.isPublic),
         });
+        setPhotoFile(null);
+        setCoverFile(null);
         setNotice("");
       });
     return () => {
       active = false;
     };
   }, [selectedId]);
+  async function uploadAsset(kind: ArtistAssetKind, asset: File) {
+    const data = new FormData();
+    data.set("kind", kind);
+    data.set("asset", asset);
+    const result = await fetchJson<{ url?: string; error?: string }>(`/api/artists/${selectedId}/assets`, {
+        method: "POST",
+        body: data,
+      });
+    if (!result.ok || !result.data?.url)
+      throw new Error(result.error || "Não foi possível enviar a imagem.");
+    return result.data.url;
+  }
   async function saveArtist(event: React.FormEvent) {
     event.preventDefault();
-    const response = await fetch(`/api/artists/${selectedId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(form),
-      }),
-      data = (await response.json()) as { error?: string; slug?: string };
-    if (!response.ok) {
-      setNotice(data.error || "Não foi possível salvar o catálogo.");
+    let nextForm = { ...form };
+    try {
+      if (photoFile)
+        nextForm.photoUrl = await uploadAsset("photo", photoFile);
+      if (coverFile)
+        nextForm.coverUrl = await uploadAsset("cover", coverFile);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Não foi possível enviar a imagem.",
+      );
       return;
     }
-    setForm((current) => ({ ...current, slug: data.slug || current.slug }));
+    const result = await fetchJson<{ error?: string; slug?: string }>(`/api/artists/${selectedId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(nextForm),
+      });
+    if (!result.ok) {
+      setNotice(result.error || "Não foi possível salvar o catálogo.");
+      return;
+    }
+    nextForm = { ...nextForm, slug: result.data?.slug || nextForm.slug };
+    setForm(nextForm);
+    setPhotoFile(null);
+    setCoverFile(null);
     setNotice("Dados públicos do artista atualizados.");
   }
   async function saveOrganizationDescription() {
-    const response = await fetch(`/api/organizations/${organization.id}`, {
+    const result = await fetchJson(`/api/organizations/${organization.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...organization, description }),
     });
     setNotice(
-      response.ok
+      result.ok
         ? "Apresentação da organização atualizada."
         : "Não foi possível atualizar a apresentação.",
     );
@@ -132,9 +169,11 @@ export function CatalogManager({
     key: Exclude<keyof ArtistFields, "isPublic">,
     label: string,
     placeholder = "",
+    hint?: string,
   ) => (
     <label>
       {label}
+      {hint && <small className="image-field-hint">{hint}</small>}
       <input
         disabled={!canManage}
         value={form[key]}
@@ -147,7 +186,7 @@ export function CatalogManager({
     <section className="catalog-manager">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Catálogo público</p>
+          <p className="eyebrow">Booking</p>
           <h1>Vitrine comercial</h1>
           <p>Controle somente as informações autorizadas para visitantes.</p>
         </div>
@@ -227,13 +266,43 @@ export function CatalogManager({
                 </small>
               </span>
             </label>
+            <div className="branding-assets-grid">
+              <AssetUploader
+                key={`${selectedId}:photo:${form.photoUrl}`}
+                label="Foto do artista"
+                value={form.photoUrl || null}
+                hint={artistAssetHint("photo")}
+                maxBytes={ARTIST_ASSET_LIMITS.photo}
+                onChange={setPhotoFile}
+                onValidationError={setNotice}
+              />
+              <AssetUploader
+                key={`${selectedId}:cover:${form.coverUrl}`}
+                label="Capa do artista"
+                value={form.coverUrl || null}
+                hint={artistAssetHint("cover")}
+                maxBytes={ARTIST_ASSET_LIMITS.cover}
+                onChange={setCoverFile}
+                onValidationError={setNotice}
+              />
+            </div>
             <div className="catalog-form-grid">
               {field("name", "Nome artístico *")}
               {field("slug", "URL do artista", "artista-x")}
               {field("genre", "Gênero musical")}
               {field("baseCity", "Cidade-base")}
-              {field("photoUrl", "URL da foto")}
-              {field("coverUrl", "URL da capa")}
+              {field(
+                "photoUrl",
+                "URL da foto",
+                "Link HTTPS ou anexo do Discord",
+                artistAssetHint("photo"),
+              )}
+              {field(
+                "coverUrl",
+                "URL da capa",
+                "Link HTTPS ou anexo do Discord",
+                artistAssetHint("cover"),
+              )}
               {field("instagram", "Instagram")}
               {field("spotify", "Spotify")}
               {field("youtube", "YouTube")}

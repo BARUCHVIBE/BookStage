@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-html-link-for-pages, @next/next/no-img-element -- catálogo aceita imagens externas configuradas pela organização. */
+/* eslint-disable @next/next/no-html-link-for-pages -- catálogo público utiliza rotas internas sem Link. */
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import {
@@ -12,6 +12,9 @@ import {
   Youtube,
 } from "lucide-react";
 import { RequestShowButton } from "@/app/components/request-show-form";
+import { ResilientImage } from "@/app/components/resilient-image";
+import { PlatformBrand } from "@/app/components/platform-brand";
+import { artistImageSources } from "@/app/lib/artist-assets";
 import {
   getPublicArtist,
   getPublicAvailability,
@@ -68,28 +71,24 @@ export default async function PublicArtistPage({
           {organization.name}
         </a>
         <a href="/" className="public-brand">
-          <span className="brand-mark">
-            B<span />
-          </span>
-          <b>BookStage</b>
+          <PlatformBrand />
         </a>
       </header>
       <section className="artist-public-hero">
         <div className="artist-cover">
-          {artist.coverUrl ? (
-            <img src={artist.coverUrl} alt={`Capa de ${artist.name}`} />
-          ) : (
-            <div />
-          )}
+          <ResilientImage
+            sources={artistImageSources(artist.coverUrl, artist.photoUrl)}
+            alt={`Capa de ${artist.name}`}
+            fallback={<div />}
+          />
         </div>
         <div className="artist-public-intro">
-          {artist.photoUrl && (
-            <img
-              className="artist-public-photo"
-              src={artist.photoUrl}
-              alt={artist.name}
-            />
-          )}
+          <ResilientImage
+            sources={[artist.photoUrl]}
+            className="artist-public-photo"
+            alt={artist.name}
+            fallback={null}
+          />
           <div>
             <p className="eyebrow">{artist.genre || "Artista"}</p>
             <h1>{artist.name}</h1>
@@ -235,7 +234,7 @@ export default async function PublicArtistPage({
       </div>
       <footer className="public-footer">
         <span>{organization.name}</span>
-        <small>Catálogo comercial powered by BookStage</small>
+        <small>Catálogo comercial powered by BookBusiness</small>
       </footer>
     </main>
   );

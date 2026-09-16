@@ -7,6 +7,7 @@ import {
   type ProposalStatus,
 } from "@/app/lib/proposal-rules";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
+import { currentOperationalDate } from "@/app/lib/operational-time";
 
 const statusActivity: Record<
   Exclude<ProposalStatus, "DRAFT">,
@@ -91,6 +92,11 @@ export async function PATCH(
         { status: 409 },
       );
     }
+    if (status === "ACCEPTED" && access.validityDate < currentOperationalDate())
+      return Response.json(
+        { error: "Esta proposta venceu. Marque-a como expirada e crie uma nova proposta." },
+        { status: 409 },
+      );
     const activity = statusActivity[status as Exclude<ProposalStatus, "DRAFT">];
     const statements = [
       env.DB.prepare(

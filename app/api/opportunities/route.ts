@@ -29,7 +29,11 @@ export async function GET(request: Request) {
     stage = url.searchParams.get("stage") || "",
     artistId = url.searchParams.get("artistId") || "",
     assignedUserId = url.searchParams.get("assignedUserId") || "",
+    pageValue = url.searchParams.get("page") || "0",
     search = (url.searchParams.get("q") || "").trim().slice(0, 100);
+  if (!/^\d+$/.test(pageValue) || Number(pageValue) > 10_000)
+    return Response.json({ error: "Página inválida." }, { status: 400 });
+  const page = Number(pageValue), pageSize = 100;
   if (
     stage &&
     !opportunityStages.includes(stage as (typeof opportunityStages)[number])
@@ -88,14 +92,16 @@ export async function GET(request: Request) {
     const term = `%${search}%`;
     bindings.push(term, term, term, term);
   }
-  const rows = await env.DB.prepare(
-    `SELECT opportunity.id,opportunity.stage,opportunity.source,opportunity.event_date AS eventDate,opportunity.city,opportunity.state,opportunity.venue,opportunity.event_type AS eventType,opportunity.estimated_audience AS estimatedAudience,opportunity.budget,opportunity.proposed_value AS proposedValue,opportunity.next_action AS nextAction,opportunity.next_action_at AS nextActionAt,opportunity.commercial_approval_status AS commercialApprovalStatus,opportunity.financial_approval_status AS financialApprovalStatus,opportunity.created_at AS createdAt,opportunity.updated_at AS updatedAt,artist.id AS artistId,artist.name AS artistName,customer.id AS customerId,customer.name AS customerName,customer.company_name AS companyName,opportunity.assigned_user_id AS assignedUserId,assignee.name AS assigneeName,opportunity.originator_user_id AS originatorUserId,originator.name AS originatorName,opportunity.commercial_validator_user_id AS commercialValidatorUserId,validator.name AS commercialValidatorName FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id LEFT JOIN users assignee ON assignee.id=opportunity.assigned_user_id LEFT JOIN users originator ON originator.id=opportunity.originator_user_id LEFT JOIN users validator ON validator.id=opportunity.commercial_validator_user_id WHERE ${clauses.join(" AND ")} ORDER BY opportunity.updated_at DESC LIMIT 250`,
-  )
-    .bind(...bindings)
-    .all();
+  const where = clauses.join(" AND "),
+    count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id WHERE ${where}`).bind(...bindings).first<{ total: number }>(),
+    rows = await env.DB.prepare(
+      `SELECT opportunity.id,opportunity.stage,opportunity.source,opportunity.event_date AS eventDate,opportunity.city,opportunity.state,opportunity.venue,opportunity.event_type AS eventType,opportunity.estimated_audience AS estimatedAudience,opportunity.budget,opportunity.proposed_value AS proposedValue,opportunity.next_action AS nextAction,opportunity.next_action_at AS nextActionAt,opportunity.commercial_approval_status AS commercialApprovalStatus,opportunity.financial_approval_status AS financialApprovalStatus,opportunity.created_at AS createdAt,opportunity.updated_at AS updatedAt,artist.id AS artistId,artist.name AS artistName,customer.id AS customerId,customer.name AS customerName,customer.company_name AS companyName,opportunity.assigned_user_id AS assignedUserId,assignee.name AS assigneeName,opportunity.originator_user_id AS originatorUserId,originator.name AS originatorName,opportunity.commercial_validator_user_id AS commercialValidatorUserId,validator.name AS commercialValidatorName FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id LEFT JOIN users assignee ON assignee.id=opportunity.assigned_user_id LEFT JOIN users originator ON originator.id=opportunity.originator_user_id LEFT JOIN users validator ON validator.id=opportunity.commercial_validator_user_id WHERE ${where} ORDER BY opportunity.updated_at DESC,opportunity.id DESC LIMIT ? OFFSET ?`,
+    ).bind(...bindings, pageSize, page * pageSize).all();
   return Response.json({
     opportunities: rows.results,
     stages: opportunityStages,
+    role: context.membership.role,
+    pagination: { page, pageSize, total: Number(count?.total || 0), hasMore: (page + 1) * pageSize < Number(count?.total || 0) },
   });
 }
 
@@ -204,7 +210,7 @@ export async function POST(request: Request) {
       interval.startDatetime,
       interval.endDatetime,
     );
-    if (conflict) return conflictResponse(conflict);
+if (conflict) return conflictResponse(conflict, context.membership.role);
   }
   const statements = [];
   if (!ids.length)

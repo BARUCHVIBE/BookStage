@@ -7,12 +7,33 @@ export const opportunityCalendarActions = [
 export type OpportunityCalendarAction =
   (typeof opportunityCalendarActions)[number];
 
+type CalendarConfirmationRole =
+  | "OWNER"
+  | "MANAGER"
+  | "SALES"
+  | "BOOKING_AGENT"
+  | "PRODUCTION"
+  | "FINANCE";
+
+export function canConfirmOpportunityDate(
+  role: CalendarConfirmationRole,
+  userId: string,
+  commercialValidatorUserId: string | null,
+) {
+  return (
+    role === "OWNER" ||
+    role === "MANAGER" ||
+    (role === "SALES" && commercialValidatorUserId === userId)
+  );
+}
+
 export function defaultOpportunityInterval(eventDate: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate))
     throw new Error("Data do evento inválida.");
   return {
-    startDatetime: `${eventDate}T18:00:00.000Z`,
-    endDatetime: `${eventDate}T23:00:00.000Z`,
+    // BookStage currently operates in America/Sao_Paulo. Persist instants in UTC.
+    startDatetime: new Date(`${eventDate}T18:00:00-03:00`).toISOString(),
+    endDatetime: new Date(`${eventDate}T23:00:00-03:00`).toISOString(),
   };
 }
 
@@ -41,4 +62,17 @@ export function isOpportunityCalendarAction(
     typeof value === "string" &&
     opportunityCalendarActions.includes(value as OpportunityCalendarAction)
   );
+}
+
+export function canMutateOpportunityCalendar(stage: string) {
+  return stage !== "CLOSED_WON" && stage !== "CLOSED_LOST";
+}
+
+export function lostOpportunityCalendarDisposition(
+  status: string | null,
+  hasShow: boolean,
+) {
+  if (hasShow) return "BLOCK_SHOW" as const;
+  if (status === "BLOCKED") return "BLOCK_OPERATIONAL" as const;
+  return status ? ("RELEASE" as const) : ("NONE" as const);
 }

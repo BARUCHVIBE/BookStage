@@ -83,18 +83,4 @@ export async function findBlockingConflict(
     }>();
 }
 
-export function conflictResponse(conflict: {
-  id: string;
-  title: string;
-  status: string;
-  startDatetime: string;
-  endDatetime: string | null;
-}) {
-  return Response.json(
-    {
-      error: `Conflito com “${conflict.title}” (${conflict.status}). Revise a data antes de confirmar ou bloquear.`,
-      conflict,
-    },
-    { status: 409 },
-  );
-}
+export { conflictResponse } from "./calendar-response";

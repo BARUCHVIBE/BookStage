@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { canAccessContract, type ContractStatus } from "./contract-rules";
 import type { Role } from "./tenant";
+import { canAccessArtistDocument } from "./member-access";
 
 export type ContractAccess = {
   id: string;
@@ -33,6 +34,7 @@ export async function accessibleContract(
     .bind(id, organizationId)
     .first<ContractAccess>();
   return contract &&
+    await canAccessArtistDocument(organizationId, userId, role, contract.artistId) &&
     canAccessContract(
       role,
       contract.assignedUserId,

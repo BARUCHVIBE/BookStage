@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   };
   const member = organizationId
     ? await env.DB.prepare(
-        `SELECT 1 FROM memberships WHERE user_id=? AND organization_id=? AND status='ACTIVE'`,
+        `SELECT 1 FROM memberships membership JOIN organizations organization ON organization.id=membership.organization_id WHERE membership.user_id=? AND membership.organization_id=? AND membership.status='ACTIVE' AND organization.status='ACTIVE'`,
       )
         .bind(user.id, organizationId)
         .first()

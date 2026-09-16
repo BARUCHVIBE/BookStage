@@ -3,6 +3,11 @@ import { requireActiveMembership } from "@/app/lib/active-membership";
 import { accessibleShow } from "@/app/lib/show-access";
 import { canManageFinance } from "@/app/lib/finance-rules";
 import {
+  conflictResponse,
+  findBlockingConflict,
+} from "@/app/lib/calendar-access";
+import { rescheduleOperationalInterval } from "@/app/lib/operational-time";
+import {
   canEditProduction,
   canViewShowCommercial,
   normalizeProductionInput,
@@ -247,6 +252,64 @@ export async function PATCH(
         { status: 400 },
       );
   }
+  let scheduleChange: {
+    artistId: string;
+    startDatetime: string;
+    endDatetime: string | null;
+    previousStart: string;
+  } | null = null;
+  if ("showTime" in body) {
+    if (!input.showTime)
+      return Response.json(
+        { error: "Informe um horário válido para o show vinculado à agenda." },
+        { status: 400 },
+      );
+    const entry = await env.DB.prepare(
+      `SELECT id,artist_id AS artistId,start_datetime AS startDatetime,end_datetime AS endDatetime FROM calendar_entries WHERE id=? AND organization_id=?`,
+    )
+      .bind(access.calendarEntryId, context.organizationId)
+      .first<{
+        id: string;
+        artistId: string;
+        startDatetime: string;
+        endDatetime: string | null;
+      }>();
+    if (!entry)
+      return Response.json(
+        { error: "A entrada de agenda vinculada ao show não foi encontrada." },
+        { status: 409 },
+      );
+    try {
+      const interval = rescheduleOperationalInterval(
+        access.date,
+        input.showTime,
+        entry.startDatetime,
+        entry.endDatetime,
+      );
+      const conflict = await findBlockingConflict(
+        context.organizationId,
+        entry.artistId,
+        interval.startDatetime,
+        interval.endDatetime,
+        entry.id,
+      );
+      if (conflict)
+        return conflictResponse(conflict, context.membership.role);
+      scheduleChange = {
+        artistId: entry.artistId,
+        ...interval,
+        previousStart: entry.startDatetime,
+      };
+    } catch (error) {
+      return Response.json(
+        {
+          error:
+            error instanceof Error ? error.message : "Horário do show inválido.",
+        },
+        { status: 400 },
+      );
+    }
+  }
   const columns = [
     ["eventName", "event_name"],
     ["showTime", "show_time"],
@@ -276,7 +339,19 @@ export async function PATCH(
       { error: "Informe ao menos um campo de produção para atualizar." },
       { status: 400 },
     );
-  await env.DB.batch([
+  const statements = [
+    ...(scheduleChange
+      ? [
+          env.DB.prepare(
+            `UPDATE calendar_entries SET start_datetime=?,end_datetime=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+          ).bind(
+            scheduleChange.startDatetime,
+            scheduleChange.endDatetime,
+            access.calendarEntryId,
+            context.organizationId,
+          ),
+        ]
+      : []),
     env.DB.prepare(
       `UPDATE shows SET ${changes.map(([, column]) => `${column}=?`).join(",")},updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
     ).bind(...changes.map(([key]) => input[key]), id, context.organizationId),
@@ -291,6 +366,52 @@ export async function PATCH(
       access.opportunityId,
       context.user.id,
     ),
-  ]);
+    ...(scheduleChange
+      ? [
+          env.DB.prepare(
+            `INSERT INTO show_activities (id,organization_id,show_id,type,description,from_value,to_value,created_by) VALUES (?,?,?,'SCHEDULE_CHANGED','Horário do show e agenda sincronizados.',?,?,?)`,
+          ).bind(
+            crypto.randomUUID(),
+            context.organizationId,
+            id,
+            scheduleChange.previousStart,
+            scheduleChange.startDatetime,
+            context.user.id,
+          ),
+          env.DB.prepare(
+            `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,from_value,to_value,created_by) VALUES (?,?,?,'SHOW_SCHEDULE_CHANGED','Horário operacional e agenda do show atualizados.',?,?,?)`,
+          ).bind(
+            crypto.randomUUID(),
+            context.organizationId,
+            access.opportunityId,
+            scheduleChange.previousStart,
+            scheduleChange.startDatetime,
+            context.user.id,
+          ),
+        ]
+      : []),
+  ];
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    if (scheduleChange && String(error).includes("CALENDAR_CONFLICT")) {
+      const latest = await findBlockingConflict(
+        context.organizationId,
+        scheduleChange.artistId,
+        scheduleChange.startDatetime,
+        scheduleChange.endDatetime,
+        access.calendarEntryId,
+      );
+      if (latest) return conflictResponse(latest, context.membership.role);
+      return Response.json(
+        {
+          error:
+            "A agenda mudou enquanto o horário era salvo. Nenhuma alteração foi realizada; atualize a tela e tente novamente.",
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
   return Response.json({ ok: true });
 }

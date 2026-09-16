@@ -88,3 +88,53 @@ test("inbox legado continua lendo oportunidades com escopo da organização e do
   assert.match(route, /BOOKING_AGENT/);
   assert.match(route, /originator_user_id/);
 });
+
+test("link do Booking cria intake antes da Opportunity formal", async () => {
+  const [publicRoute, collection, detail, migration] = await Promise.all([
+    readFile(
+      new URL(
+        "../app/api/public/catalog/[organizationSlug]/[artistSlug]/requests/route.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../app/api/commercial-requests/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../app/api/commercial-requests/[id]/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../drizzle/0019_flowery_nico_minoru.sql", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  assert.match(publicRoute, /if \(bookingCode\)/);
+  assert.match(publicRoute, /getBookingPortfolio/);
+  assert.match(publicRoute, /INSERT INTO commercial_requests/);
+  assert.match(collection, /request\.booking_user_id=\?/);
+  assert.match(collection, /request\.organization_id=\?/);
+  assert.match(detail, /action === "ACCEPT"/);
+  assert.match(detail, /action === "DECLINE"/);
+  assert.match(detail, /action !== "CONVERT"/);
+  assert.match(detail, /opportunityId = crypto\.randomUUID\(\)/);
+  assert.match(detail, /guardedOpportunityInsertSql/);
+  assert.match(migration, /commercial_requests/);
+});
+
+test("orçamento do contratante permanece separado do cachê proposto", async () => {
+  const [detail, conversion] = await Promise.all([
+    readFile(
+      new URL("../app/api/commercial-requests/[id]/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../app/lib/commercial-request-conversion.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  assert.match(conversion, /estimated_audience,budget,notes/);
+  assert.doesNotMatch(`${detail}\n${conversion}`, /proposed_value[^\n]*intake\.budget/);
+});

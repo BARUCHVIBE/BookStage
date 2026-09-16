@@ -5,6 +5,7 @@ import {
   resolveOrganizationBranding,
 } from "@/app/lib/organization-branding";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
+import { brandingAssetBelongsToOrganization } from "@/app/lib/branding-assets";
 
 async function branding(organizationId: string) {
   const row = await env.DB.prepare(
@@ -45,6 +46,26 @@ export async function PATCH(request: Request) {
       { error: error instanceof Error ? error.message : "Dados inválidos." },
       { status: 400 },
     );
+  }
+  const previous = await branding(context.organizationId);
+  for (const [value, kind, existingValue] of [
+    [input.logoUrl, "logo", previous.logoUrl],
+    [input.faviconUrl, "favicon", previous.faviconUrl],
+    [input.catalogCoverUrl, "catalog-cover", previous.catalogCoverUrl],
+  ] as const) {
+    if (
+      !(await brandingAssetBelongsToOrganization(
+        env.FILES,
+        value,
+        context.organizationId,
+        kind,
+        existingValue,
+      ))
+    )
+      return Response.json(
+        { error: "Um dos arquivos não pertence a esta organização." },
+        { status: 400 },
+      );
   }
   await env.DB.batch([
     env.DB.prepare(

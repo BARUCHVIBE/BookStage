@@ -19,6 +19,8 @@ import {
   UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
+import { formatActivityDescription } from "@/app/lib/status-labels";
 import { OpportunityProposals } from "./opportunity-proposals";
 import { OpportunityGovernance } from "./opportunity-governance";
 
@@ -33,6 +35,7 @@ const stages = [
   "CLOSED_WON",
   "CLOSED_LOST",
 ] as const;
+const bookingStages = ["DATE_OPTION", "PROPOSAL", "CONTRACT"] as const;
 type Stage = (typeof stages)[number];
 const labels: Record<Stage, string> = {
   NEW: "Novo",
@@ -107,23 +110,26 @@ type Detail = {
   members: Array<{ id: string; name: string; role: string }>;
   canReassign: boolean;
   canEdit: boolean;
+  canClose: boolean;
+  calendarStatus: string | null;
   role: string;
 };
 type OpportunityCalendarData = {
   interval: { startDatetime: string; endDatetime: string | null };
   linkedEntry: {
     id: string;
-    status: string;
+    status?: string;
     startDatetime: string;
     endDatetime: string | null;
   } | null;
   conflicts: Array<{
-    id: string;
-    status: string;
-    title: string;
+    id?: string;
+    status?: string;
+    title?: string;
     startDatetime: string;
     endDatetime: string | null;
   }>;
+  canCancelOption: boolean;
   availability: "AVAILABLE" | "ATTENTION" | "BLOCKED";
   show: { id: string; status: string } | null;
   identity: { customerName: string; assigneeName: string | null };
@@ -140,8 +146,14 @@ const date = (value: string) =>
 
 export function CrmModule({
   artists,
+  initialArtistId = "",
+  startCreating = false,
+  initialOpportunityId = "",
 }: {
   artists: Array<{ id: string; name: string }>;
+  initialArtistId?: string;
+  startCreating?: boolean;
+  initialOpportunityId?: string;
 }) {
   const [items, setItems] = useState<Item[]>([]),
     [view, setView] = useState<"kanban" | "list">("kanban"),
@@ -149,11 +161,15 @@ export function CrmModule({
     [stage, setStage] = useState(""),
     [artistId, setArtistId] = useState(""),
     [detail, setDetail] = useState<Detail | null>(null),
-    [creating, setCreating] = useState(false),
+    [role, setRole] = useState(""),
+    [creating, setCreating] = useState(startCreating),
     [loading, setLoading] = useState(true),
+    [page, setPage] = useState(0),
+    [total, setTotal] = useState(0),
+    [hasMore, setHasMore] = useState(false),
     [error, setError] = useState("");
   const [createForm, setCreateForm] = useState({
-    artistId: artists[0]?.id || "",
+    artistId: initialArtistId || artists[0]?.id || "",
     customerName: "",
     companyName: "",
     email: "",
@@ -167,21 +183,28 @@ export function CrmModule({
     notes: "",
     createOption: true,
   });
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (requestedPage = 0) => {
+    if (requestedPage === 0) setLoading(true);
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (stage) params.set("stage", stage);
     if (artistId) params.set("artistId", artistId);
-    const response = await fetch(`/api/opportunities?${params}`),
-      data = (await response.json()) as {
+    params.set("page", String(requestedPage));
+    const result = await fetchJson<{
         opportunities?: Item[];
+        role?: string;
+        pagination?: { page: number; total: number; hasMore: boolean };
         error?: string;
-      };
-    if (response.ok) {
-      setItems(data.opportunities || []);
+      }>(`/api/opportunities?${params}`);
+    if (result.ok) {
+      const next = result.data?.opportunities || [];
+      setItems((current) => requestedPage === 0 ? next : [...current, ...next.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setRole(result.data?.role || "");
+      setPage(requestedPage);
+      setTotal(result.data?.pagination?.total ?? next.length);
+      setHasMore(Boolean(result.data?.pagination?.hasMore));
       setError("");
-    } else setError(data.error || "Não foi possível carregar o CRM.");
+    } else setError(result.error || "Não foi possível carregar o CRM.");
     setLoading(false);
   }, [q, stage, artistId]);
   useEffect(() => {
@@ -189,20 +212,26 @@ export function CrmModule({
     return () => clearTimeout(timer);
   }, [load]);
   async function open(id: string) {
-    const response = await fetch(`/api/opportunities/${id}`),
-      data = (await response.json()) as Detail & { error?: string };
-    if (response.ok) setDetail(data);
-    else setError(data.error || "Oportunidade não encontrada.");
+    const result = await fetchJson<Detail & { error?: string }>(
+      `/api/opportunities/${id}`,
+    );
+    if (result.ok && result.data) setDetail(result.data);
+    else setError(result.error || "Oportunidade não encontrada.");
   }
+  useEffect(() => {
+    if (initialOpportunityId) void open(initialOpportunityId);
+  }, [initialOpportunityId]);
   async function update(id: string, body: Record<string, unknown>) {
-    const response = await fetch(`/api/opportunities/${id}`, {
+    const result = await fetchJson<{ error?: string }>(
+      `/api/opportunities/${id}`,
+      {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(data.error || "Não foi possível atualizar.");
+      },
+    );
+    if (!result.ok) {
+      setError(result.error || "Não foi possível atualizar.");
       return false;
     }
     setError("");
@@ -221,7 +250,9 @@ export function CrmModule({
   }
   async function createOpportunity(event: React.FormEvent) {
     event.preventDefault();
-    const response = await fetch("/api/opportunities", {
+    const result = await fetchJson<{ id?: string; error?: string }>(
+      "/api/opportunities",
+      {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -230,10 +261,10 @@ export function CrmModule({
             ? Math.round(Number(createForm.proposedValue) * 100)
             : null,
         }),
-      }),
-      data = (await response.json()) as { id?: string; error?: string };
-    if (!response.ok) {
-      setError(data.error || "Não foi possível criar a oportunidade.");
+      },
+    );
+    if (!result.ok) {
+      setError(result.error || "Não foi possível criar a oportunidade.");
       return;
     }
     setCreating(false);
@@ -252,7 +283,7 @@ export function CrmModule({
       notes: "",
     }));
     await load();
-    if (data.id) await open(data.id);
+    if (result.data?.id) await open(result.data.id);
   }
   const grouped = useMemo(
     () =>
@@ -264,6 +295,12 @@ export function CrmModule({
       ) as Record<Stage, Item[]>,
     [items],
   );
+  const visibleStages: readonly Stage[] =
+      role === "BOOKING_AGENT" ? bookingStages : stages,
+    visibleItems =
+      role === "BOOKING_AGENT"
+        ? items.filter((item) => visibleStages.includes(item.stage))
+        : items;
   if (detail)
     return (
       <>
@@ -460,7 +497,7 @@ export function CrmModule({
               />
             </label>
             <label>
-              Valor inicial (R$)
+              Cachê proposto (R$)
               <input
                 type="number"
                 min="0"
@@ -509,7 +546,7 @@ export function CrmModule({
             onChange={(event) => setStage(event.target.value)}
           >
             <option value="">Todas as etapas</option>
-            {stages.map((item) => (
+            {visibleStages.map((item) => (
               <option value={item} key={item}>
                 {labels[item]}
               </option>
@@ -530,7 +567,7 @@ export function CrmModule({
             ))}
           </select>
         </label>
-        <span className="count-badge">{items.length} oportunidades</span>
+        <span className="count-badge">{visibleItems.length} de {total} oportunidades</span>
       </div>
       {error && <div className="calendar-alert">{error}</div>}
       {loading ? (
@@ -540,7 +577,7 @@ export function CrmModule({
         </div>
       ) : view === "kanban" ? (
         <div className="kanban-board">
-          {stages.map((column) => (
+          {visibleStages.map((column) => (
             <section
               className={`kanban-column stage-${column.toLowerCase()}`}
               key={column}
@@ -567,7 +604,12 @@ export function CrmModule({
           ))}
         </div>
       ) : (
-        <OpportunityList items={items} open={open} />
+        <OpportunityList items={visibleItems} open={open} />
+      )}
+      {hasMore && !loading && (
+        <button className="button button-secondary" onClick={() => void load(page + 1)}>
+          Carregar mais oportunidades
+        </button>
       )}
     </section>
   );
@@ -678,6 +720,8 @@ function OpportunityDetail({
   error: string;
 }) {
   const opportunity = data.opportunity,
+    detailStages: readonly Stage[] =
+      data.role === "BOOKING_AGENT" ? bookingStages : stages,
     [stage, setStage] = useState<Stage>(opportunity.stage),
     [assignee, setAssignee] = useState(opportunity.assigned_user_id || ""),
     [value, setValue] = useState(
@@ -724,6 +768,12 @@ function OpportunityDetail({
       </div>
       {error && <div className="calendar-alert">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
+      {data.calendarStatus === "CONFIRMED" &&
+        !["CLOSED_WON", "CLOSED_LOST"].includes(opportunity.stage) && (
+          <div className="notice">
+            Data confirmada — negociação aguardando fechamento.
+          </div>
+        )}
       <div className="opportunity-detail-grid">
         <form
           className="opportunity-form"
@@ -746,10 +796,16 @@ function OpportunityDetail({
               <label>
                 Etapa
                 <select
+                  disabled={data.role === "BOOKING_AGENT"}
                   value={stage}
                   onChange={(event) => setStage(event.target.value as Stage)}
                 >
-                  {stages.map((item) => (
+                  {!detailStages.includes(stage) && (
+                    <option value={stage} disabled>
+                      Aguardando opção de data
+                    </option>
+                  )}
+                  {detailStages.map((item) => (
                     <option key={item} value={item}>
                       {labels[item]}
                     </option>
@@ -777,7 +833,7 @@ function OpportunityDetail({
             </div>
             <div className="form-row">
               <label>
-                Valor proposto (R$)
+                Cachê proposto (R$)
                 <input
                   type="number"
                   min="0"
@@ -822,9 +878,47 @@ function OpportunityDetail({
               />
             </label>
             {data.canEdit && (
-              <button className="button button-primary">
-                Salvar alterações
-              </button>
+              <div className="opportunity-form-actions">
+                <button className="button button-primary">
+                  Salvar alterações
+                </button>
+                {data.canClose &&
+                  !["CLOSED_WON", "CLOSED_LOST"].includes(opportunity.stage) && (
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={async () => {
+                        const ok = await update({ stage: "CLOSED_WON" });
+                        if (ok) {
+                          setStage("CLOSED_WON");
+                          setNotice("Venda concluída. O show foi preparado para a operação.");
+                        }
+                      }}
+                    >
+                      Concluir venda
+                    </button>
+                  )}
+                {data.role === "BOOKING_AGENT" &&
+                  !["CLOSED_WON", "CLOSED_LOST"].includes(stage) && (
+                    <button
+                      type="button"
+                      className="button button-secondary proposal-reject"
+                      onClick={async () => {
+                        const reason = window.prompt(
+                          "Informe o motivo da perda desta negociação:",
+                        );
+                        if (!reason) return;
+                        const ok = await update({
+                          stage: "CLOSED_LOST",
+                          lostReason: reason,
+                        });
+                        if (ok) setStage("CLOSED_LOST");
+                      }}
+                    >
+                      Marcar negociação como perdida
+                    </button>
+                  )}
+              </div>
             )}
           </fieldset>
         </form>
@@ -885,7 +979,7 @@ function OpportunityDetail({
             {data.activities.map((activity) => (
               <div key={activity.id}>
                 <i />
-                <p>{activity.description}</p>
+              <p>{formatActivityDescription(activity.description)}</p>
                 <small>
                   {activity.authorName || "Catálogo público"} ·{" "}
                   {new Date(
@@ -925,13 +1019,11 @@ function OpportunityCalendarPanel({
   };
   const load = useCallback(async () => {
     const params = new URLSearchParams({ start: iso(start)!, end: iso(end)! }),
-      response = await fetch(
-        `/api/opportunities/${opportunity.id}/calendar?${params}`,
-      ),
-      data = (await response.json()) as OpportunityCalendarData & {
+      result = await fetchJson<OpportunityCalendarData & {
         error?: string;
-      };
-    if (response.ok) {
+      }>(`/api/opportunities/${opportunity.id}/calendar?${params}`);
+    if (result.ok && result.data) {
+      const data = result.data;
       setCalendar(data);
       if (data.linkedEntry) {
         setStart(local(data.linkedEntry.startDatetime));
@@ -941,7 +1033,8 @@ function OpportunityCalendarPanel({
             : "",
         );
       }
-    } else setMessage(data.error || "Não foi possível consultar a agenda.");
+    } else
+      setMessage(result.error || "Não foi possível consultar a agenda.");
   }, [opportunity.id, start, end]);
   useEffect(() => {
     load();
@@ -956,7 +1049,7 @@ function OpportunityCalendarPanel({
       return;
     setBusy(true);
     setMessage("");
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         `/api/opportunities/${opportunity.id}/calendar`,
         {
           method: "POST",
@@ -967,11 +1060,10 @@ function OpportunityCalendarPanel({
             endDatetime: iso(end),
           }),
         },
-      ),
-      data = (await response.json()) as { error?: string };
+      );
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível atualizar a agenda.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível atualizar a agenda.");
       return;
     }
     setMessage(
@@ -1041,9 +1133,9 @@ function OpportunityCalendarPanel({
             <CircleAlert />
             Conflitos encontrados
           </b>
-          {calendar.conflicts.map((conflict) => (
-            <span key={conflict.id}>
-              {conflict.title} · {conflict.status}
+          {calendar.conflicts.map((conflict, index) => (
+            <span key={conflict.id ?? index}>
+              {conflict.title ? `${conflict.title} · ${conflict.status}` : new Date(conflict.startDatetime).toLocaleString("pt-BR")}
             </span>
           ))}
         </div>
@@ -1100,7 +1192,7 @@ function OpportunityCalendarPanel({
             <CalendarPlus />
             Criar opção
           </button>
-          {status === "OPTION" && (
+          {calendar?.canCancelOption && (
             <button
               className="cancel-option"
               disabled={busy}

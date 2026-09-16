@@ -11,7 +11,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 export type CalendarArtist = { id: string; name: string };
 type CalendarStatus =
@@ -116,49 +117,83 @@ export function CalendarModule({
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [confirmDelete, setConfirmDelete] = useState(false);
+  const panelRef = useRef<HTMLFormElement>(null);
   const month = monthKey(cursor);
   const requestEntries = useCallback(async () => {
     const params = new URLSearchParams({ month });
     if (artistId) params.set("artistId", artistId);
     if (canViewStatuses && status) params.set("status", status);
-    const response = await fetch(`/api/calendar?${params}`),
-      data = (await response.json()) as {
+    return fetchJson<{
         entries?: CalendarEntry[];
         canCreate?: boolean;
         canViewInternalNotes?: boolean;
         canViewStatuses?: boolean;
         error?: string;
-      };
-    return { response, data };
+      }>(`/api/calendar?${params}`);
   }, [month, artistId, status, canViewStatuses]);
   const load = useCallback(async () => {
-    const { response, data } = await requestEntries();
-    if (response.ok) {
+    const result = await requestEntries();
+    if (result.ok) {
+      const data = result.data || {};
       setEntries(data.entries || []);
       setCanCreate(Boolean(data.canCreate));
       setCanViewInternalNotes(Boolean(data.canViewInternalNotes));
       setCanViewStatuses(Boolean(data.canViewStatuses));
       setError("");
-    } else setError(data.error || "Não foi possível carregar a agenda.");
+    } else setError(result.error || "Não foi possível carregar a agenda.");
     setLoading(false);
   }, [requestEntries]);
   useEffect(() => {
     let active = true;
-    requestEntries().then(({ response, data }) => {
+    requestEntries().then((result) => {
       if (!active) return;
-      if (response.ok) {
+      if (result.ok) {
+        const data = result.data || {};
         setEntries(data.entries || []);
         setCanCreate(Boolean(data.canCreate));
         setCanViewInternalNotes(Boolean(data.canViewInternalNotes));
         setCanViewStatuses(Boolean(data.canViewStatuses));
         setError("");
-      } else setError(data.error || "Não foi possível carregar a agenda.");
+      } else setError(result.error || "Não foi possível carregar a agenda.");
       setLoading(false);
     });
     return () => {
       active = false;
     };
   }, [requestEntries]);
+  useEffect(() => {
+    if (!panelOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    panel?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPanelOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]',
+        ),
+      );
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [panelOpen]);
 
   const days = useMemo(() => {
     const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1),
@@ -207,17 +242,16 @@ export function CalendarModule({
       title: form.title,
       ...(canViewInternalNotes ? { internalNotes: form.internalNotes } : {}),
     };
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         editing ? `/api/calendar/${editing.id}` : "/api/calendar",
         {
           method: editing ? "PUT" : "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),
         },
-      ),
-      data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(data.error || "Não foi possível salvar o evento.");
+      );
+    if (!result.ok) {
+      setError(result.error || "Não foi possível salvar o evento.");
       return;
     }
     setPanelOpen(false);
@@ -226,14 +260,13 @@ export function CalendarModule({
   }
   async function remove() {
     if (!editing) return;
-    const response = await fetch(`/api/calendar/${editing.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/calendar/${editing.id}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ confirm: true }),
-      }),
-      data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(data.error || "Não foi possível remover o evento.");
+      });
+    if (!result.ok) {
+      setError(result.error || "Não foi possível remover o evento.");
       return;
     }
     setPanelOpen(false);
@@ -422,7 +455,14 @@ export function CalendarModule({
             if (event.target === event.currentTarget) setPanelOpen(false);
           }}
         >
-          <form className="calendar-panel" onSubmit={save}>
+          <form
+            ref={panelRef}
+            className="calendar-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="calendar-panel-title"
+            onSubmit={save}
+          >
             <div className="calendar-panel-head">
               <div>
                 <p className="eyebrow">
@@ -432,7 +472,7 @@ export function CalendarModule({
                       : "Visualizar evento"
                     : "Novo evento"}
                 </p>
-                <h2>{editing ? editing.title : "Adicionar à agenda"}</h2>
+                <h2 id="calendar-panel-title">{editing ? editing.title : "Adicionar à agenda"}</h2>
               </div>
               <button
                 type="button"

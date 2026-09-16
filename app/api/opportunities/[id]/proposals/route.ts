@@ -15,6 +15,7 @@ type Opportunity = {
   originatorUserId: string | null;
   commercialValidatorUserId: string | null;
   commercialApprovalStatus: string;
+  proposedValue: number | null;
 };
 
 async function accessibleOpportunity(
@@ -24,7 +25,7 @@ async function accessibleOpportunity(
   role: Parameters<typeof canAccessOpportunity>[0],
 ) {
   const opportunity = await env.DB.prepare(
-    `SELECT id,artist_id AS artistId,customer_id AS customerId,assigned_user_id AS assignedUserId,originator_user_id AS originatorUserId,commercial_validator_user_id AS commercialValidatorUserId,commercial_approval_status AS commercialApprovalStatus FROM opportunities WHERE id=? AND organization_id=?`,
+    `SELECT id,artist_id AS artistId,customer_id AS customerId,assigned_user_id AS assignedUserId,originator_user_id AS originatorUserId,commercial_validator_user_id AS commercialValidatorUserId,commercial_approval_status AS commercialApprovalStatus,proposed_value AS proposedValue FROM opportunities WHERE id=? AND organization_id=?`,
   )
     .bind(id, organizationId)
     .first<Opportunity>();
@@ -136,7 +137,14 @@ export async function POST(
       { status: 500 },
     );
   const proposalId = crypto.randomUUID(),
-    proposalNumber = formatProposalNumber(year, sequence.nextNumber);
+    proposalNumber = formatProposalNumber(year, sequence.nextNumber),
+    money = (value: number | null) =>
+      value === null
+        ? "não informado"
+        : new Intl.NumberFormat("pt-BR", {
+            style: "currency",
+            currency: "BRL",
+          }).format(value / 100);
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO proposals (id,organization_id,opportunity_id,artist_id,customer_id,proposal_number,value,payment_terms,transportation_terms,accommodation_terms,technical_terms,additional_terms,validity_date,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT',?)`,
@@ -166,6 +174,26 @@ export async function POST(
       proposalId,
       context.user.id,
     ),
+    env.DB.prepare(
+      `UPDATE opportunities SET stage=CASE WHEN stage IN ('NEW','CONTACTED','QUALIFIED','NEGOTIATION','DATE_OPTION') THEN 'PROPOSAL' ELSE stage END,proposed_value=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+    ).bind(input.value, id, context.organizationId),
+    ...(opportunity.proposedValue !== input.value
+      ? [
+          env.DB.prepare(
+            `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,from_value,to_value,created_by) VALUES (?,?,?,'VALUE_CHANGED',?,?,?,?)`,
+          ).bind(
+            crypto.randomUUID(),
+            context.organizationId,
+            id,
+            `Cachê proposto alterado de ${money(opportunity.proposedValue)} para ${money(input.value)}.`,
+            opportunity.proposedValue === null
+              ? null
+              : String(opportunity.proposedValue),
+            String(input.value),
+            context.user.id,
+          ),
+        ]
+      : []),
     env.DB.prepare(
       `INSERT INTO referral_events (id,organization_id,referral_link_id,artist_id,user_id,opportunity_id,type) SELECT ?,organization_id,referral_link_id,artist_id,originator_user_id,id,'PROPOSAL_CREATED' FROM opportunities WHERE id=? AND organization_id=? AND referral_link_id IS NOT NULL AND originator_user_id IS NOT NULL`,
     ).bind(crypto.randomUUID(), id, context.organizationId),

@@ -2,9 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   experimental: {
-    // Branding covers allow 5 MB. Vinext otherwise treats multipart POSTs
-    // above its 1 MB Server Action default as a progressive action first.
-    serverActions: { bodySizeLimit: "6mb" },
+    // The largest accepted files are private contracts/production documents
+    // (10 MiB). Keep enough room for multipart headers while the endpoints
+    // continue enforcing their own, narrower per-file limits.
+    serverActions: { bodySizeLimit: "12mb" },
   },
 };
 

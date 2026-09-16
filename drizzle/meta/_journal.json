@@ -127,6 +127,69 @@
       "when": 1787337867793,
       "tag": "0017_chilly_rumiko_fujikawa",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787370603353,
+      "tag": "0018_lyrical_iron_lad",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1787370924792,
+      "tag": "0019_flowery_nico_minoru",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1787371347482,
+      "tag": "0020_blue_omega_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1787378175272,
+      "tag": "0021_backfill_opportunity_commercial_validator",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787379260239,
+      "tag": "0022_remove_legacy_commission_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1787379812375,
+      "tag": "0023_modern_commission_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1789600000000,
+      "tag": "0024_operational_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1789603600000,
+      "tag": "0025_opportunity_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1789607200000,
+      "tag": "0026_terminal_update_guard",
+      "breakpoints": true
     }
   ]
 }

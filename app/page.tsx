@@ -6,7 +6,7 @@ import { appearanceBootScript } from "./lib/appearance";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
-  title: "BookStage — Operação de shows",
+  title: "BookBusiness — Operação de shows",
   description: "Todo o modelo operacional de shows em um só lugar.",
 };
 

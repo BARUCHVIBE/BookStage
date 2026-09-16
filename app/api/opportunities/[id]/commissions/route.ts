@@ -5,6 +5,7 @@ import {
   validateCommissionTransition,
   type CommissionStatus,
 } from "@/app/lib/finance-rules";
+import { canManageOpportunityCommissions } from "@/app/lib/opportunity-finance-rules";
 import { canAccessArtist } from "@/app/lib/member-access";
 import { canAccessOpportunity } from "@/app/lib/opportunity-rules";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
@@ -71,12 +72,12 @@ export async function GET(
   )
     .bind(...bindings)
     .all();
-  const members = ["OWNER", "MANAGER", "FINANCE"].includes(
+  const beneficiaries = canManageOpportunityCommissions(
     result.context.membership.role,
   )
     ? (
         await env.DB.prepare(
-          `SELECT user.id,user.name,CASE WHEN membership.role='SALES' AND membership.professional_role='BOOKING_AGENT' THEN 'BOOKING_AGENT' ELSE membership.role END AS role FROM memberships membership JOIN users user ON user.id=membership.user_id WHERE membership.organization_id=? AND membership.status='ACTIVE' AND membership.role IN ('OWNER','MANAGER','SALES') ORDER BY user.name`,
+          `SELECT user.id AS userId,user.name,membership.role AS baseRole,membership.professional_role AS professionalRole,CASE WHEN membership.role='SALES' AND membership.professional_role='BOOKING_AGENT' THEN 'BOOKING_AGENT' ELSE membership.role END AS role,membership.status FROM memberships membership JOIN users user ON user.id=membership.user_id WHERE membership.organization_id=? AND membership.status='ACTIVE' AND membership.role IN ('OWNER','MANAGER','SALES') ORDER BY user.name`,
         )
           .bind(result.context.organizationId)
           .all()
@@ -84,10 +85,8 @@ export async function GET(
     : [];
   return Response.json({
     commissions: rows.results,
-    members,
-    canManage: ["OWNER", "MANAGER", "FINANCE"].includes(
-      result.context.membership.role,
-    ),
+    beneficiaries,
+    canManage: canManageOpportunityCommissions(result.context.membership.role),
   });
 }
 export async function POST(
@@ -99,7 +98,7 @@ export async function POST(
   const { id } = await route.params,
     result = await access(id);
   if ("error" in result) return result.error;
-  if (!["OWNER", "MANAGER", "FINANCE"].includes(result.context.membership.role))
+  if (!canManageOpportunityCommissions(result.context.membership.role))
     return Response.json(
       { error: "Sem permissão para definir comissões." },
       { status: 403 },
@@ -117,10 +116,10 @@ export async function POST(
     );
   }
   const member = await env.DB.prepare(
-    `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE' AND role IN ('OWNER','MANAGER','SALES')`,
+    `SELECT user.name,CASE WHEN membership.role='SALES' AND membership.professional_role='BOOKING_AGENT' THEN 'BOOKING_AGENT' ELSE membership.role END AS role FROM memberships membership JOIN users user ON user.id=membership.user_id WHERE membership.organization_id=? AND membership.user_id=? AND membership.status='ACTIVE' AND membership.role IN ('OWNER','MANAGER','SALES')`,
   )
     .bind(result.context.organizationId, input.userId)
-    .first();
+    .first<{ name: string; role: string }>();
   if (!member)
     return Response.json(
       { error: "Beneficiário inválido para esta organização." },
@@ -147,11 +146,15 @@ export async function POST(
         result.context.user.id,
       ),
       env.DB.prepare(
-        `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,'FINANCIAL_ITEM_CREATED','Comissão estimada criada.',?,?)`,
+        `UPDATE opportunities SET financial_approval_status=CASE WHEN financial_approval_status='APPROVED' THEN 'CHANGES_REQUESTED' ELSE financial_approval_status END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+      ).bind(id, result.context.organizationId),
+      env.DB.prepare(
+        `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,'FINANCIAL_ITEM_CREATED',?,?,?)`,
       ).bind(
         crypto.randomUUID(),
         result.context.organizationId,
         id,
+        `${result.context.user.name} criou comissão estimada ${input.type} de ${input.amount} centavos para ${member.name}.`,
         String(input.amount),
         result.context.user.id,
       ),
@@ -162,7 +165,11 @@ export async function POST(
         { error: "Este participante já possui comissão deste tipo." },
         { status: 409 },
       );
-    throw error;
+    console.error("Failed to create opportunity commission", error);
+    return Response.json(
+      { error: "Não foi possível criar a comissão." },
+      { status: 500 },
+    );
   }
   return Response.json(
     { id: commissionId, amount: input.amount },
@@ -178,11 +185,6 @@ export async function PATCH(
   const { id } = await route.params,
     result = await access(id);
   if ("error" in result) return result.error;
-  if (!["OWNER", "FINANCE"].includes(result.context.membership.role))
-    return Response.json(
-      { error: "Sem permissão para aprovar comissões." },
-      { status: 403 },
-    );
   const body = (await request.json().catch(() => ({}))) as Record<
       string,
       unknown
@@ -197,6 +199,85 @@ export async function PATCH(
     return Response.json(
       { error: "Comissão não encontrada." },
       { status: 404 },
+    );
+  if (body.action === "UPDATE") {
+    if (!canManageOpportunityCommissions(result.context.membership.role))
+      return Response.json(
+        { error: "Sem permissão para editar comissões." },
+        { status: 403 },
+      );
+    if (current.status !== "ESTIMATED")
+      return Response.json(
+        { error: "Somente comissões estimadas podem ser editadas." },
+        { status: 409 },
+      );
+    let input;
+    try {
+      input = normalizeCommissionInput(body, result.opportunity.proposedValue);
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof Error ? error.message : "Comissão inválida." },
+        { status: 400 },
+      );
+    }
+    const beneficiary = await env.DB.prepare(
+      `SELECT 1 FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE' AND role IN ('OWNER','MANAGER','SALES')`,
+    )
+      .bind(result.context.organizationId, input.userId)
+      .first();
+    if (!beneficiary)
+      return Response.json(
+        { error: "Beneficiário inválido para esta organização." },
+        { status: 400 },
+      );
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE show_commissions SET user_id=?,type=?,method=?,calculation_base=?,percentage=?,base_amount=?,amount=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND opportunity_id=? AND organization_id=? AND status='ESTIMATED'`,
+        ).bind(
+          input.userId,
+          input.type,
+          input.method,
+          input.calculationBase,
+          input.percentage,
+          input.baseAmount,
+          input.amount,
+          input.notes,
+          commissionId,
+          id,
+          result.context.organizationId,
+        ),
+        env.DB.prepare(
+          `UPDATE opportunities SET financial_approval_status=CASE WHEN financial_approval_status='APPROVED' THEN 'CHANGES_REQUESTED' ELSE financial_approval_status END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+        ).bind(id, result.context.organizationId),
+        env.DB.prepare(
+          `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,'FINANCIAL_ITEM_UPDATED','Comissão estimada atualizada.',?,?)`,
+        ).bind(
+          crypto.randomUUID(),
+          result.context.organizationId,
+          id,
+          String(input.amount),
+          result.context.user.id,
+        ),
+      ]);
+    } catch (error) {
+      if (String(error).includes("UNIQUE"))
+        return Response.json(
+          { error: "Este participante já possui comissão deste tipo." },
+          { status: 409 },
+        );
+      console.error("Failed to update opportunity commission", error);
+      return Response.json(
+        { error: "Não foi possível atualizar a comissão." },
+        { status: 500 },
+      );
+    }
+    return Response.json({ ok: true, amount: input.amount });
+  }
+  if (!["OWNER", "FINANCE"].includes(result.context.membership.role))
+    return Response.json(
+      { error: "Sem permissão para aprovar comissões." },
+      { status: 403 },
     );
   let next;
   try {

@@ -64,6 +64,18 @@ export function canEditOpportunity(
   );
 }
 
+export function canCloseOpportunity(
+  role: Role,
+  currentUserId: string,
+  commercialValidatorUserId: string | null,
+) {
+  return (
+    role === "OWNER" ||
+    role === "MANAGER" ||
+    (role === "SALES" && commercialValidatorUserId === currentUserId)
+  );
+}
+
 export function validateOpportunityStage(value: unknown): OpportunityStage {
   if (
     typeof value !== "string" ||

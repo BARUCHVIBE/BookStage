@@ -18,11 +18,16 @@ export function canAccessContract(
   return (
     role === "OWNER" ||
     role === "MANAGER" ||
-    (["SALES", "BOOKING_AGENT"].includes(role) &&
+    role === "FINANCE" ||
+    (role === "SALES" &&
       (assignedUserId === currentUserId ||
         originatorUserId === currentUserId ||
-        (role === "SALES" && commercialValidatorUserId === currentUserId)))
+        commercialValidatorUserId === currentUserId))
   );
+}
+
+export function canManageContract(role: Role) {
+  return ["OWNER", "MANAGER", "SALES"].includes(role);
 }
 
 export function formatContractNumber(year: number, number: number) {

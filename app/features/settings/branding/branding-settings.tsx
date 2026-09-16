@@ -4,12 +4,12 @@ import { AlertTriangle, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_BOOKSTAGE_THEME,
-  contrastRatio,
-  readableForeground,
+  organizationBrandingContrastWarnings,
   type OrganizationBranding,
 } from "@/app/lib/organization-branding";
 import {
   BRANDING_ASSET_LIMITS,
+  brandingAssetHint,
   type BrandingAssetKind,
 } from "@/app/lib/branding-assets";
 import { AssetUploader } from "./asset-uploader";
@@ -17,14 +17,15 @@ import { BrandPreview } from "./brand-preview";
 import { ColorSelector } from "./color-selector";
 import { FontSelector } from "./font-selector";
 import type { OrganizationProfile } from "./types";
+import { fetchJson } from "@/app/lib/http-client";
 
 type AssetKind = BrandingAssetKind;
 
 async function responseData(response: Response) {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json"))
-    return (await response.json()) as { url?: string; error?: string };
-  const detail = (await response.text()).trim();
+  const detail = (await response.text().catch(() => "")).trim();
+  let parsed: { url?: string; error?: string } = {};
+  try { if (detail) parsed = JSON.parse(detail) as typeof parsed; } catch { /* preserve HTTP error below */ }
+  if (parsed.url || parsed.error) return parsed;
   return {
     error:
       response.status === 413
@@ -52,44 +53,24 @@ export function BrandingSettings({
     [message, setMessage] = useState("");
   useEffect(() => {
     let active = true;
-    fetch("/api/organization-branding")
-      .then(
-        (response) =>
-          response.json() as Promise<{
+    fetchJson<{
             branding?: OrganizationBranding;
             error?: string;
-          }>,
-      )
-      .then((data) => {
+          }>("/api/organization-branding")
+      .then((result) => {
         if (!active) return;
-        if (data.branding) {
-          setDraft(data.branding);
-          setLogoPreview(data.branding.logoUrl);
-        } else setMessage(data.error || "Não foi possível carregar o tema.");
+        if (result.ok && result.data?.branding) {
+          setDraft(result.data.branding);
+          setLogoPreview(result.data.branding.logoUrl);
+        } else setMessage(result.error || "Não foi possível carregar o tema.");
         setLoading(false);
       });
     return () => void (active = false);
   }, [organization.id]);
-  const warnings = useMemo(() => {
-    const items: string[] = [];
-    for (const [label, color, comparison] of [
-      ["cor primária", draft.primaryColor, draft.backgroundColor],
-      ["cor secundária", draft.secondaryColor, draft.backgroundColor],
-      ["cor de destaque", draft.accentColor, draft.backgroundColor],
-    ] as const) {
-      if (
-        !/^#[0-9a-f]{6}$/i.test(color) ||
-        !/^#[0-9a-f]{6}$/i.test(comparison)
-      )
-        continue;
-      if (contrastRatio(color, comparison) < 3)
-        items.push(`A ${label} está muito próxima da cor de fundo.`);
-      const foreground = readableForeground(color);
-      if (contrastRatio(color, foreground) < 4.5)
-        items.push(`A ${label} pode dificultar a leitura de textos menores.`);
-    }
-    return items;
-  }, [draft]);
+  const warnings = useMemo(
+    () => organizationBrandingContrastWarnings(draft),
+    [draft],
+  );
   function update<K extends keyof OrganizationBranding>(
     key: K,
     value: OrganizationBranding[K],
@@ -134,22 +115,23 @@ export function BrandingSettings({
           },
         ),
       );
-      const response = await fetch("/api/organization-branding", {
+      const result = await fetchJson<{
+          branding?: OrganizationBranding;
+          error?: string;
+        }>("/api/organization-branding", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(next),
-        }),
-        data = (await response.json()) as {
-          branding?: OrganizationBranding;
-          error?: string;
-        };
-      if (!response.ok || !data.branding)
-        throw new Error(data.error || "Não foi possível salvar o tema.");
-      setDraft(data.branding);
-      setLogoPreview(data.branding.logoUrl);
+        });
+      if (!result.ok || !result.data?.branding)
+        throw new Error(result.error || "Não foi possível salvar o tema.");
+      const data = result.data;
+      const branding = data.branding!;
+      setDraft(branding);
+      setLogoPreview(branding.logoUrl);
       setFiles({});
       setMessage("Identidade visual salva com sucesso.");
-      onUpdated({ ...organization, logo: data.branding.logoUrl });
+      onUpdated({ ...organization, logo: branding.logoUrl });
       window.dispatchEvent(new Event("bookstage:branding-updated"));
     } catch (error) {
       setMessage(
@@ -181,7 +163,7 @@ export function BrandingSettings({
             key={draft.logoUrl ?? "logo"}
             label="Logo da empresa"
             value={draft.logoUrl}
-            hint="PNG, JPG ou WebP · até 2 MB"
+            hint={brandingAssetHint("logo")}
             maxBytes={BRANDING_ASSET_LIMITS.logo}
             onValidationError={setMessage}
             onChange={(file) => setAsset("logo", file)}
@@ -192,7 +174,7 @@ export function BrandingSettings({
             compact
             label="Favicon"
             value={draft.faviconUrl}
-            hint="Imagem quadrada · até 2 MB"
+            hint={brandingAssetHint("favicon")}
             maxBytes={BRANDING_ASSET_LIMITS.favicon}
             onValidationError={setMessage}
             onChange={(file) => setAsset("favicon", file)}
@@ -224,9 +206,11 @@ export function BrandingSettings({
           <div className="branding-contrast-warning" role="status">
             <AlertTriangle />
             <div>
+              <strong>Atenção ao contraste</strong>
               {warnings.map((warning) => (
                 <p key={warning}>{warning}</p>
               ))}
+              <small>O aviso não impede salvar as alterações.</small>
             </div>
           </div>
         )}
@@ -248,7 +232,7 @@ export function BrandingSettings({
             key={draft.catalogCoverUrl ?? "catalog-cover"}
             label="Imagem de capa"
             value={draft.catalogCoverUrl}
-            hint="Proporção horizontal · até 5 MB"
+            hint={brandingAssetHint("catalog-cover")}
             maxBytes={BRANDING_ASSET_LIMITS["catalog-cover"]}
             onValidationError={setMessage}
             onChange={(file) => setAsset("catalog-cover", file)}

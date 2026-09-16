@@ -24,13 +24,14 @@ type Opportunity = {
   venue: string | null;
   proposedValue: number | null;
   commercialValidatorUserId: string | null;
+  commercialApprovalStatus: string;
 };
 
 export async function GET(request: Request) {
   const context = await requireActiveMembership();
   if ("error" in context) return context.error;
   if (
-    !["OWNER", "MANAGER", "SALES", "BOOKING_AGENT"].includes(
+    !["OWNER", "MANAGER", "SALES", "FINANCE"].includes(
       context.membership.role,
     )
   )
@@ -46,9 +47,7 @@ export async function GET(request: Request) {
     !contractStatuses.includes(status as (typeof contractStatuses)[number])
   )
     return Response.json({ error: "Status inválido." }, { status: 400 });
-  const salesClause = ["SALES", "BOOKING_AGENT"].includes(
-      context.membership.role,
-    )
+  const salesClause = context.membership.role === "SALES"
       ? " AND (opportunity.assigned_user_id=? OR opportunity.originator_user_id=? OR opportunity.commercial_validator_user_id=?)"
       : "",
     statusClause = status ? " AND contract.status=?" : "",
@@ -56,7 +55,7 @@ export async function GET(request: Request) {
       ? " AND (contract.contract_number LIKE ? OR customer.name LIKE ? OR artist.name LIKE ?)"
       : "";
   const bindings: unknown[] = [context.organizationId];
-  if (["SALES", "BOOKING_AGENT"].includes(context.membership.role))
+  if (context.membership.role === "SALES")
     bindings.push(context.user.id, context.user.id, context.user.id);
   if (status) bindings.push(status);
   if (q) bindings.push(`%${q}%`, `%${q}%`, `%${q}%`);
@@ -66,18 +65,19 @@ export async function GET(request: Request) {
     .bind(...bindings)
     .all();
   const opportunityBindings: unknown[] = [context.organizationId];
-  const opportunitySalesClause = ["SALES", "BOOKING_AGENT"].includes(
-    context.membership.role,
-  )
+  const opportunitySalesClause = context.membership.role === "SALES"
     ? " AND (opportunity.assigned_user_id=? OR opportunity.originator_user_id=? OR opportunity.commercial_validator_user_id=?)"
     : "";
-  if (["SALES", "BOOKING_AGENT"].includes(context.membership.role))
+  if (context.membership.role === "SALES")
     opportunityBindings.push(context.user.id, context.user.id, context.user.id);
-  const opportunities = await env.DB.prepare(
-    `SELECT opportunity.id,opportunity.event_date AS eventDate,opportunity.stage,customer.name AS customerName,artist.name AS artistName,show.id AS showId FROM opportunities opportunity JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id LEFT JOIN shows show ON show.opportunity_id=opportunity.id AND show.organization_id=opportunity.organization_id WHERE opportunity.organization_id=?${opportunitySalesClause} ORDER BY opportunity.updated_at DESC`,
-  )
-    .bind(...opportunityBindings)
-    .all();
+  const opportunities =
+    context.membership.role === "FINANCE"
+      ? { results: [] }
+      : await env.DB.prepare(
+          `SELECT opportunity.id,opportunity.event_date AS eventDate,opportunity.stage,customer.name AS customerName,artist.name AS artistName,show.id AS showId FROM opportunities opportunity JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id LEFT JOIN shows show ON show.opportunity_id=opportunity.id AND show.organization_id=opportunity.organization_id WHERE opportunity.organization_id=?${opportunitySalesClause} ORDER BY opportunity.updated_at DESC`,
+        )
+          .bind(...opportunityBindings)
+          .all();
   return Response.json({
     contracts: contracts.results,
     opportunities: opportunities.results,
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
   const context = await requireActiveMembership();
   if ("error" in context) return context.error;
   if (
-    !["OWNER", "MANAGER", "SALES", "BOOKING_AGENT"].includes(
+    !["OWNER", "MANAGER", "SALES"].includes(
       context.membership.role,
     )
   )
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     opportunityId =
       typeof body.opportunityId === "string" ? body.opportunityId : "";
   const opportunity = await env.DB.prepare(
-    `SELECT opportunity.id,opportunity.artist_id AS artistId,opportunity.customer_id AS customerId,opportunity.assigned_user_id AS assignedUserId,opportunity.originator_user_id AS originatorUserId,opportunity.commercial_validator_user_id AS commercialValidatorUserId,opportunity.event_date AS eventDate,opportunity.city,opportunity.state,opportunity.venue,opportunity.proposed_value AS proposedValue,artist.name AS artistName,customer.name AS customerName,customer.company_name AS companyName FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id WHERE opportunity.id=? AND opportunity.organization_id=?`,
+    `SELECT opportunity.id,opportunity.artist_id AS artistId,opportunity.customer_id AS customerId,opportunity.assigned_user_id AS assignedUserId,opportunity.originator_user_id AS originatorUserId,opportunity.commercial_validator_user_id AS commercialValidatorUserId,opportunity.commercial_approval_status AS commercialApprovalStatus,opportunity.event_date AS eventDate,opportunity.city,opportunity.state,opportunity.venue,opportunity.proposed_value AS proposedValue,artist.name AS artistName,customer.name AS customerName,customer.company_name AS companyName FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id WHERE opportunity.id=? AND opportunity.organization_id=?`,
   )
     .bind(opportunityId, context.organizationId)
     .first<Opportunity>();
@@ -127,15 +127,15 @@ export async function POST(request: Request) {
       typeof body.templateId === "string" ? body.templateId : "",
     template = requestedTemplateId
       ? await env.DB.prepare(
-          `SELECT id,body FROM contract_templates WHERE id=? AND organization_id=? AND status='ACTIVE'`,
+          `SELECT id,body,template_type AS templateType,file_key AS fileKey,field_mapping AS fieldMapping,version FROM contract_templates WHERE id=? AND organization_id=? AND status='ACTIVE' AND (artist_id=? OR artist_id IS NULL)`,
         )
-          .bind(requestedTemplateId, context.organizationId)
-          .first<{ id: string; body: string }>()
+          .bind(requestedTemplateId, context.organizationId, opportunity.artistId)
+          .first<{ id: string; body: string; templateType: string; fileKey: string | null; fieldMapping: string; version: number }>()
       : await env.DB.prepare(
-          `SELECT id,body FROM contract_templates WHERE organization_id=? AND status='ACTIVE' AND is_default=1 LIMIT 1`,
+          `SELECT id,body,template_type AS templateType,file_key AS fileKey,field_mapping AS fieldMapping,version FROM contract_templates WHERE organization_id=? AND status='ACTIVE' AND is_default=1 AND (artist_id=? OR artist_id IS NULL) ORDER BY CASE WHEN artist_id=? THEN 0 ELSE 1 END LIMIT 1`,
         )
-          .bind(context.organizationId)
-          .first<{ id: string; body: string }>();
+          .bind(context.organizationId, opportunity.artistId, opportunity.artistId)
+          .first<{ id: string; body: string; templateType: string; fileKey: string | null; fieldMapping: string; version: number }>();
   if (requestedTemplateId && !template)
     return Response.json({ error: "Modelo não encontrado." }, { status: 404 });
   const show = await env.DB.prepare(
@@ -171,7 +171,7 @@ export async function POST(request: Request) {
     });
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO contracts (id,organization_id,opportunity_id,show_id,customer_id,artist_id,contract_number,template_id,template_body_snapshot,field_values,status,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,'DRAFT',?,?)`,
+      `INSERT INTO contracts (id,organization_id,opportunity_id,show_id,customer_id,artist_id,contract_number,template_id,template_body_snapshot,template_type,template_file_key_snapshot,template_mapping_snapshot,field_values,version,status,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT',?,?)`,
     ).bind(
       contractId,
       context.organizationId,
@@ -182,7 +182,11 @@ export async function POST(request: Request) {
       contractNumber,
       template?.id || null,
       template?.body || null,
+      template?.templateType || "TEXT",
+      template?.fileKey || null,
+      template?.fieldMapping || "{}",
       JSON.stringify(fieldValues),
+      template?.version || 1,
       notes,
       context.user.id,
     ),
@@ -206,6 +210,9 @@ export async function POST(request: Request) {
       contractId,
       context.user.id,
     ),
+    env.DB.prepare(
+      `UPDATE opportunities SET stage=CASE WHEN stage NOT IN ('CLOSED_WON','CLOSED_LOST') THEN 'CONTRACT' ELSE stage END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+    ).bind(opportunityId, context.organizationId),
   ]);
   return Response.json({ id: contractId, contractNumber }, { status: 201 });
 }

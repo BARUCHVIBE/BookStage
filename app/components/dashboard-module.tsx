@@ -17,6 +17,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 type Item = Record<string, string | number | null>;
 type DashboardData = {
@@ -78,9 +79,7 @@ const date = (value: unknown) =>
       ).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
     : "—";
 async function fetchDashboard(query: string) {
-  const response = await fetch(`/api/dashboard?${query}`),
-    data = (await response.json()) as DashboardData & { error?: string };
-  return { response, data };
+  return fetchJson<DashboardData & { error?: string }>(`/api/dashboard?${query}`);
 }
 
 export function DashboardModule({
@@ -106,22 +105,22 @@ export function DashboardModule({
   );
   const load = useCallback(async () => {
     const result = await fetchDashboard(query);
-    if (result.response.ok) {
+    if (result.ok && result.data) {
       setData(result.data);
       setMessage("");
     } else
-      setMessage(result.data.error || "Não foi possível carregar o dashboard.");
+      setMessage(result.error || "Não foi possível carregar o dashboard.");
   }, [query]);
   useEffect(() => {
     let mounted = true;
     fetchDashboard(query).then((result) => {
       if (!mounted) return;
-      if (result.response.ok) {
+      if (result.ok && result.data) {
         setData(result.data);
         setMessage("");
       } else
         setMessage(
-          result.data.error || "Não foi possível carregar o dashboard.",
+          result.error || "Não foi possível carregar o dashboard.",
         );
     });
     return () => {
@@ -201,7 +200,7 @@ export function DashboardModule({
               <div className="dashboard-metrics">
                 <Metric
                   icon={<UserPlus />}
-                  label="Novos leads"
+                  label="Novas oportunidades"
                   value={String(data.commercial.newLeads)}
                 />
                 <Metric
@@ -345,10 +344,10 @@ export function DashboardModule({
                 />
                 <AlertGroup
                   icon={<CalendarClock />}
-                  label="Opções em até 14 dias"
+                  label="Opções vencidas ou a vencer"
                   items={data.tasks.optionAttention}
                   detail={(item) =>
-                    `${item.title} · ${date(item.startDatetime)}`
+                    `${item.title} · expira ${date(item.optionExpiresAt)}`
                   }
                 />
               </section>

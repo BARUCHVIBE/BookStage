@@ -23,5 +23,55 @@
   ],
   "observability": {
     "enabled": true
+  },
+  "env": {
+    "staging": {
+      "name": "bookstage-staging",
+      "vars": {
+        "BOOKSTAGE_SKIP_RUNTIME_BOOTSTRAP": "true",
+        "BOOKSTAGE_ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bookstage-staging-v2",
+          "database_id": "8cb1e2d1-4413-4506-a882-7a9b16178b0b",
+          "migrations_dir": "drizzle"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "bookstage-staging-files"
+        }
+      ],
+      "observability": {
+        "enabled": true
+      }
+    },
+    "production": {
+      "name": "bookstage-production",
+      "vars": {
+        "BOOKSTAGE_SKIP_RUNTIME_BOOTSTRAP": "true",
+        "BOOKSTAGE_ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bookstage-production",
+          "database_id": "8dd9a58f-e706-48a4-a55d-5bb825b34220",
+          "migrations_dir": "drizzle"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "bookstage-production-files"
+        }
+      ],
+      "observability": {
+        "enabled": true
+      }
+    }
   }
 }

@@ -2,6 +2,8 @@
 
 import { LockKeyhole, Mail } from "lucide-react";
 import { useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
+import { PlatformBrand, PlatformWatermark } from "@/app/components/platform-brand";
 
 export function LoginForm() {
   const [email, setEmail] = useState(""),
@@ -12,14 +14,13 @@ export function LoginForm() {
     event.preventDefault();
     setLoading(true);
     setError("");
-    const response = await fetch("/api/auth/login", {
+    const result = await fetchJson<{ error?: string }>("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
-    const data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setError(data.error || "Não foi possível entrar.");
+    if (!result.ok) {
+      setError(result.error || "Não foi possível entrar.");
       setLoading(false);
       return;
     }
@@ -28,12 +29,7 @@ export function LoginForm() {
   return (
     <main className="login-page">
       <section className="login-brand">
-        <div className="brand">
-          <span className="brand-mark">
-            B<span />
-          </span>
-          <b>BookStage</b>
-        </div>
+        <PlatformBrand className="login-platform-brand" />
         <div>
           <p className="eyebrow">Operação centralizada</p>
           <h1>Todo o modelo operacional de shows em um só lugar.</h1>
@@ -42,9 +38,10 @@ export function LoginForm() {
             organização.
           </p>
         </div>
-        <small>BookStage · Ambiente local</small>
+        <small>BookBusiness · Ambiente local</small>
       </section>
       <section className="login-panel">
+        <PlatformWatermark className="login-watermark" />
         <form className="login-form" onSubmit={submit}>
           <div className="login-heading">
             <h2>Acesse sua conta</h2>

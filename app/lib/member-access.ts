@@ -45,6 +45,13 @@ export async function canAccessArtist(
 export function canManageTeam(role: Role) {
   return role === "OWNER";
 }
+
+/** Historical documents use the same current artist authorization as CRM.
+ * Revoking an assignment must also revoke direct document URLs. */
+export async function canAccessArtistDocument(organizationId: string, userId: string, role: Role, artistId: string) {
+  const membership = await env.DB.prepare(`SELECT artist_access_scope AS scope FROM memberships WHERE organization_id=? AND user_id=? AND status='ACTIVE'`).bind(organizationId, userId).first<{ scope: ArtistAccessScope }>();
+  return Boolean(membership && await canAccessArtist(organizationId, userId, role, membership.scope, artistId));
+}
 export function canViewTeam(role: Role) {
   return role === "OWNER" || role === "MANAGER";
 }

@@ -167,6 +167,33 @@ export const membershipActivities = sqliteTable(
   ],
 );
 
+export const bookingCommercialProfiles = sqliteTable(
+  "booking_commercial_profiles",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    publicCode: text("public_code").notNull(),
+    title: text("title").notNull().default("Booking Agent"),
+    avatarUrl: text("avatar_url"),
+    phone: text("phone"),
+    whatsapp: text("whatsapp"),
+    status: text("status", { enum: ["ACTIVE", "REVOKED"] })
+      .notNull()
+      .default("ACTIVE"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_booking_commercial_profiles_code").on(table.publicCode),
+    index("idx_booking_commercial_profiles_status").on(table.status),
+  ],
+);
+
 export const artists = sqliteTable(
   "artists",
   {
@@ -522,6 +549,77 @@ export const opportunities = sqliteTable(
       table.organizationId,
       table.nextActionAt,
       table.stage,
+    ),
+  ],
+);
+
+export const commercialRequests = sqliteTable(
+  "commercial_requests",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    artistId: text("artist_id").notNull(),
+    bookingUserId: text("booking_user_id").notNull(),
+    opportunityId: text("opportunity_id"),
+    source: text("source", { enum: ["BOOKING_CATALOG"] })
+      .notNull()
+      .default("BOOKING_CATALOG"),
+    status: text("status", {
+      enum: ["NEW", "ACCEPTED", "DECLINED", "CONVERTED"],
+    })
+      .notNull()
+      .default("NEW"),
+    customerName: text("customer_name").notNull(),
+    companyName: text("company_name"),
+    phone: text("phone").notNull(),
+    email: text("email").notNull(),
+    document: text("document"),
+    eventDate: text("event_date").notNull(),
+    city: text("city").notNull(),
+    state: text("state").notNull(),
+    venue: text("venue"),
+    eventType: text("event_type").notNull(),
+    estimatedAudience: integer("estimated_audience"),
+    budget: text("budget"),
+    notes: text("notes"),
+    decisionNotes: text("decision_notes"),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_commercial_requests_id_tenant").on(
+      table.id,
+      table.organizationId,
+    ),
+    foreignKey({
+      columns: [table.artistId, table.organizationId],
+      foreignColumns: [artists.id, artists.organizationId],
+      name: "fk_commercial_request_artist_tenant",
+    }),
+    foreignKey({
+      columns: [table.organizationId, table.bookingUserId],
+      foreignColumns: [memberships.organizationId, memberships.userId],
+      name: "fk_commercial_request_booking_tenant",
+    }),
+    foreignKey({
+      columns: [table.opportunityId, table.organizationId],
+      foreignColumns: [opportunities.id, opportunities.organizationId],
+      name: "fk_commercial_request_opportunity_tenant",
+    }),
+    index("idx_commercial_requests_booking_status").on(
+      table.bookingUserId,
+      table.status,
+      table.createdAt,
+    ),
+    index("idx_commercial_requests_tenant_status").on(
+      table.organizationId,
+      table.status,
+      table.createdAt,
     ),
   ],
 );
@@ -901,7 +999,8 @@ export const payments = sqliteTable(
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id").notNull(),
-    showId: text("show_id").notNull(),
+    opportunityId: text("opportunity_id").notNull(),
+    showId: text("show_id"),
     description: text("description").notNull(),
     amount: integer("amount").notNull(),
     dueDate: text("due_date").notNull(),
@@ -925,10 +1024,20 @@ export const payments = sqliteTable(
       table.organizationId,
     ),
     foreignKey({
+      columns: [table.opportunityId, table.organizationId],
+      foreignColumns: [opportunities.id, opportunities.organizationId],
+      name: "fk_payment_opportunity_tenant",
+    }).onDelete("cascade"),
+    foreignKey({
       columns: [table.showId, table.organizationId],
       foreignColumns: [shows.id, shows.organizationId],
       name: "fk_payment_show_tenant",
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
+    index("idx_payments_opportunity_due").on(
+      table.organizationId,
+      table.opportunityId,
+      table.dueDate,
+    ),
     index("idx_payments_show_status_due").on(
       table.organizationId,
       table.showId,
@@ -939,6 +1048,45 @@ export const payments = sqliteTable(
       table.organizationId,
       table.status,
       table.dueDate,
+    ),
+  ],
+);
+
+export const paymentReceipts = sqliteTable(
+  "payment_receipts",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    paymentId: text("payment_id").notNull(),
+    opportunityId: text("opportunity_id").notNull(),
+    amount: integer("amount").notNull(),
+    receivedAt: text("received_at").notNull(),
+    method: text("method").notNull(),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_payment_receipt_id_org").on(table.id, table.organizationId),
+    uniqueIndex("idx_payment_receipt_idempotency").on(
+      table.organizationId,
+      table.idempotencyKey,
+    ),
+    foreignKey({
+      columns: [table.paymentId, table.organizationId],
+      foreignColumns: [payments.id, payments.organizationId],
+      name: "fk_receipt_payment_tenant",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.opportunityId, table.organizationId],
+      foreignColumns: [opportunities.id, opportunities.organizationId],
+      name: "fk_receipt_opportunity_tenant",
+    }).onDelete("restrict"),
+    index("idx_receipts_opportunity_date").on(
+      table.organizationId,
+      table.opportunityId,
+      table.receivedAt,
     ),
   ],
 );
@@ -1242,8 +1390,22 @@ export const contractTemplates = sqliteTable(
   {
     id: text("id").primaryKey(),
     organizationId: text("organization_id").notNull(),
+    artistId: text("artist_id"),
     templateKey: text("template_key").notNull(),
     name: text("name").notNull(),
+    category: text("category"),
+    description: text("description"),
+    templateType: text("template_type", {
+      enum: ["TEXT", "PDF_ACROFORM", "PDF_STATIC"],
+    })
+      .notNull()
+      .default("TEXT"),
+    fileKey: text("file_key"),
+    fileName: text("file_name"),
+    fileType: text("file_type"),
+    fileSize: integer("file_size"),
+    detectedFields: text("detected_fields").notNull().default("[]"),
+    fieldMapping: text("field_mapping").notNull().default("{}"),
     version: integer("version").notNull().default(1),
     status: text("status", { enum: ["ACTIVE", "ARCHIVED"] })
       .notNull()
@@ -1271,8 +1433,13 @@ export const contractTemplates = sqliteTable(
       table.version,
     ),
     uniqueIndex("idx_contract_templates_one_default")
-      .on(table.organizationId)
+      .on(table.organizationId, table.artistId)
       .where(sql`${table.isDefault} = 1 AND ${table.status} = 'ACTIVE'`),
+    foreignKey({
+      columns: [table.artistId, table.organizationId],
+      foreignColumns: [artists.id, artists.organizationId],
+      name: "fk_contract_template_artist_tenant",
+    }),
     foreignKey({
       columns: [table.organizationId, table.createdBy],
       foreignColumns: [memberships.organizationId, memberships.userId],
@@ -1298,8 +1465,19 @@ export const contracts = sqliteTable(
     contractNumber: text("contract_number").notNull(),
     templateId: text("template_id"),
     templateBodySnapshot: text("template_body_snapshot"),
+    templateType: text("template_type", {
+      enum: ["TEXT", "PDF_ACROFORM", "PDF_STATIC"],
+    })
+      .notNull()
+      .default("TEXT"),
+    templateFileKeySnapshot: text("template_file_key_snapshot"),
+    templateMappingSnapshot: text("template_mapping_snapshot")
+      .notNull()
+      .default("{}"),
     fieldValues: text("field_values").notNull().default("{}"),
+    version: integer("version").notNull().default(1),
     generatedAt: text("generated_at"),
+    generatedBy: text("generated_by"),
     status: text("status", { enum: ["DRAFT", "SENT", "SIGNED", "CANCELLED"] })
       .notNull()
       .default("DRAFT"),
@@ -1357,6 +1535,11 @@ export const contracts = sqliteTable(
       columns: [table.organizationId, table.createdBy],
       foreignColumns: [memberships.organizationId, memberships.userId],
       name: "fk_contract_creator_tenant",
+    }),
+    foreignKey({
+      columns: [table.organizationId, table.generatedBy],
+      foreignColumns: [memberships.organizationId, memberships.userId],
+      name: "fk_contract_generator_tenant",
     }),
     index("idx_contracts_opportunity_created").on(
       table.organizationId,

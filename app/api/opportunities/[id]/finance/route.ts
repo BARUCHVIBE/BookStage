@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireActiveMembership } from "@/app/lib/active-membership";
 import { canAccessArtist } from "@/app/lib/member-access";
 import {
+  canManageOpportunityFinancialItems,
   calculateOpportunityMargin,
   normalizeFinancialItem,
   type FinancialItem,
@@ -58,7 +59,7 @@ export async function GET(
     result = await access(id);
   if ("error" in result) return result.error;
   const items = await env.DB.prepare(
-      `SELECT item.id,item.kind,item.category,item.description,item.quantity,item.unit_amount AS unitAmount,item.total_amount AS totalAmount,item.notes,item.responsible_user_id AS responsibleUserId,responsible.name AS responsibleName,item.status,item.created_at AS createdAt,item.updated_at AS updatedAt FROM opportunity_financial_items item LEFT JOIN users responsible ON responsible.id=item.responsible_user_id WHERE item.organization_id=? AND item.opportunity_id=? ORDER BY item.kind DESC,item.created_at`,
+      `SELECT item.id,item.kind,item.category,item.description,item.quantity,item.unit_amount AS unitAmount,item.total_amount AS totalAmount,item.notes,item.responsible_user_id AS responsibleUserId,responsible.name AS responsibleName,item.status,item.created_at AS createdAt,item.updated_at AS updatedAt FROM opportunity_financial_items item LEFT JOIN users responsible ON responsible.id=item.responsible_user_id WHERE item.organization_id=? AND item.opportunity_id=? AND item.status<>'CANCELLED' ORDER BY item.kind DESC,item.created_at`,
     )
       .bind(result.context.organizationId, id)
       .all<FinancialItem>(),
@@ -85,13 +86,9 @@ export async function GET(
       result.opportunity.proposedValue || 0,
     ),
     approvalStatus: result.opportunity.financialApprovalStatus,
-    canManage: [
-      "OWNER",
-      "MANAGER",
-      "FINANCE",
-      "SALES",
-      "BOOKING_AGENT",
-    ].includes(result.context.membership.role),
+    canManage: canManageOpportunityFinancialItems(
+      result.context.membership.role,
+    ),
   });
 }
 export async function POST(
@@ -103,11 +100,7 @@ export async function POST(
   const { id } = await route.params,
     result = await access(id);
   if ("error" in result) return result.error;
-  if (
-    !["OWNER", "MANAGER", "FINANCE", "SALES", "BOOKING_AGENT"].includes(
-      result.context.membership.role,
-    )
-  )
+  if (!canManageOpportunityFinancialItems(result.context.membership.role))
     return Response.json({ error: "Sem permissão." }, { status: 403 });
   if (
     result.context.membership.role === "BOOKING_AGENT" &&
@@ -144,7 +137,8 @@ export async function POST(
       );
   }
   const itemId = crypto.randomUUID();
-  await env.DB.batch([
+  try {
+    await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO opportunity_financial_items (id,organization_id,opportunity_id,kind,category,description,quantity,unit_amount,total_amount,notes,responsible_user_id,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
@@ -166,15 +160,23 @@ export async function POST(
       `UPDATE opportunities SET financial_approval_status=CASE WHEN financial_approval_status='APPROVED' THEN 'CHANGES_REQUESTED' ELSE financial_approval_status END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
     ).bind(id, result.context.organizationId),
     env.DB.prepare(
-      `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,'FINANCIAL_ITEM_CREATED','Item financeiro criado.',?,?)`,
+      `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,'FINANCIAL_ITEM_CREATED',?,?,?)`,
     ).bind(
       crypto.randomUUID(),
       result.context.organizationId,
       id,
+      `${result.context.user.name} adicionou ${input.kind === "COST" ? "custo" : "receita"} ${input.category} de ${input.totalAmount} centavos.`,
       String(input.totalAmount),
       result.context.user.id,
     ),
-  ]);
+    ]);
+  } catch (error) {
+    console.error("Failed to create opportunity financial item", error);
+    return Response.json(
+      { error: "Não foi possível criar o item financeiro." },
+      { status: 500 },
+    );
+  }
   return Response.json({ id: itemId }, { status: 201 });
 }
 export async function PATCH(
@@ -186,11 +188,7 @@ export async function PATCH(
   const { id } = await route.params,
     result = await access(id);
   if ("error" in result) return result.error;
-  if (
-    !["OWNER", "MANAGER", "FINANCE", "SALES", "BOOKING_AGENT"].includes(
-      result.context.membership.role,
-    )
-  )
+  if (!canManageOpportunityFinancialItems(result.context.membership.role))
     return Response.json({ error: "Sem permissão." }, { status: 403 });
   if (
     result.context.membership.role === "BOOKING_AGENT" &&
@@ -209,7 +207,7 @@ export async function PATCH(
     >,
     itemId = typeof body.id === "string" ? body.id : "";
   const existing = await env.DB.prepare(
-    `SELECT id,kind,category,description,quantity,unit_amount AS unitAmount,notes,responsible_user_id AS responsibleUserId,status FROM opportunity_financial_items WHERE id=? AND opportunity_id=? AND organization_id=?`,
+    `SELECT id,kind,category,description,quantity,unit_amount AS unitAmount,total_amount AS totalAmount,notes,responsible_user_id AS responsibleUserId,status FROM opportunity_financial_items WHERE id=? AND opportunity_id=? AND organization_id=?`,
   )
     .bind(itemId, id, result.context.organizationId)
     .first<Record<string, unknown>>();
@@ -224,7 +222,8 @@ export async function PATCH(
       { status: 400 },
     );
   }
-  await env.DB.batch([
+  try {
+    await env.DB.batch([
     env.DB.prepare(
       `UPDATE opportunity_financial_items SET kind=?,category=?,description=?,quantity=?,unit_amount=?,total_amount=?,notes=?,responsible_user_id=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND opportunity_id=? AND organization_id=?`,
     ).bind(
@@ -245,7 +244,7 @@ export async function PATCH(
       `UPDATE opportunities SET financial_approval_status=CASE WHEN financial_approval_status='APPROVED' THEN 'CHANGES_REQUESTED' ELSE financial_approval_status END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
     ).bind(id, result.context.organizationId),
     env.DB.prepare(
-      `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,to_value,created_by) VALUES (?,?,?,?,?,?,?)`,
+      `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,from_value,to_value,created_by) VALUES (?,?,?,?,?,?,?,?)`,
     ).bind(
       crypto.randomUUID(),
       result.context.organizationId,
@@ -254,11 +253,19 @@ export async function PATCH(
         ? "FINANCIAL_ITEM_CANCELLED"
         : "FINANCIAL_ITEM_UPDATED",
       input.status === "CANCELLED"
-        ? "Item financeiro cancelado."
-        : "Item financeiro atualizado.",
+        ? `${result.context.user.name} removeu o item financeiro ${String(existing.category)}.`
+        : `${result.context.user.name} alterou ${input.category} de ${String(existing.totalAmount)} para ${input.totalAmount} centavos.`,
+      String(existing.totalAmount),
       String(input.totalAmount),
       result.context.user.id,
     ),
-  ]);
+    ]);
+  } catch (error) {
+    console.error("Failed to update opportunity financial item", error);
+    return Response.json(
+      { error: "Não foi possível atualizar o item financeiro." },
+      { status: 500 },
+    );
+  }
   return Response.json({ ok: true });
 }

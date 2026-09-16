@@ -11,6 +11,7 @@ import {
   referralCookie,
   validReferralToken,
 } from "@/app/lib/referrals";
+import { getBookingPortfolio } from "@/app/lib/booking-commercial";
 
 async function hash(value: string) {
   const bytes = await crypto.subtle.digest(
@@ -67,6 +68,63 @@ export async function POST(
       { error: "Muitas solicitações recentes. Tente novamente mais tarde." },
       { status: 429 },
     );
+  const bookingCode =
+    typeof raw.bookingCode === "string" ? raw.bookingCode.trim() : "";
+  if (bookingCode) {
+    const portfolio = await getBookingPortfolio(bookingCode, {
+      organizationSlug,
+      artistSlug,
+    });
+    const authorizedArtist = portfolio?.artists.find(
+      (artist) =>
+        artist.organizationId === identity.organizationId &&
+        artist.artistId === identity.artistId,
+    );
+    if (!portfolio || !authorizedArtist)
+      return Response.json(
+        { error: "Este link comercial não possui mais acesso ao artista." },
+        { status: 404 },
+      );
+    const commercialRequestId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO commercial_requests (id,organization_id,artist_id,booking_user_id,source,status,customer_name,company_name,phone,email,document,event_date,city,state,venue,event_type,estimated_audience,budget,notes) VALUES (?,?,?,?,'BOOKING_CATALOG','NEW',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(
+        commercialRequestId,
+        identity.organizationId,
+        identity.artistId,
+        portfolio.profile.userId,
+        input.name,
+        input.companyName,
+        input.phone,
+        input.email,
+        input.document,
+        input.eventDate,
+        input.city,
+        input.state,
+        input.venue,
+        input.eventType,
+        input.estimatedAudience,
+        input.budget,
+        input.notes,
+      ),
+      env.DB.prepare(
+        `INSERT INTO public_request_attempts (id,organization_id,fingerprint_hash) VALUES (?,?,?)`,
+      ).bind(crypto.randomUUID(), identity.organizationId, fingerprint),
+      env.DB.prepare(
+        `DELETE FROM public_request_attempts WHERE created_at<datetime('now','-24 hours')`,
+      ),
+    ]);
+    return Response.json(
+      {
+        ok: true,
+        requestId: commercialRequestId,
+        intake: true,
+        message: `Solicitação enviada para ${portfolio.profile.name}.`,
+      },
+      { status: 201 },
+    );
+  }
   const normalizedEmail = normalizeEmail(input.email),
     normalizedPhone = normalizePhone(input.phone);
   const matches = await env.DB.prepare(

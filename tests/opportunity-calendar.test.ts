@@ -2,15 +2,37 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  canConfirmOpportunityDate,
+  canMutateOpportunityCalendar,
   defaultOpportunityInterval,
   isOpportunityCalendarAction,
+  lostOpportunityCalendarDisposition,
   normalizeOpportunityInterval,
 } from "../app/lib/opportunity-calendar";
 
+test("responsável comercial do artista pode confirmar a data sem elevar seu perfil", () => {
+  assert.equal(canConfirmOpportunityDate("SALES", "ana", "ana"), true);
+  assert.equal(canConfirmOpportunityDate("SALES", "outro", "ana"), false);
+  assert.equal(canConfirmOpportunityDate("BOOKING_AGENT", "booking", "ana"), false);
+  assert.equal(canConfirmOpportunityDate("FINANCE", "finance", "ana"), false);
+  assert.equal(canConfirmOpportunityDate("OWNER", "owner", null), true);
+  assert.equal(canConfirmOpportunityDate("MANAGER", "manager", null), true);
+});
+test("oportunidades encerradas não aceitam novas ações de agenda", () => {
+  assert.equal(canMutateOpportunityCalendar("NEGOTIATION"), true);
+  assert.equal(canMutateOpportunityCalendar("CLOSED_WON"), false);
+  assert.equal(canMutateOpportunityCalendar("CLOSED_LOST"), false);
+  assert.equal(lostOpportunityCalendarDisposition("OPTION", false), "RELEASE");
+  assert.equal(lostOpportunityCalendarDisposition("CONFIRMED", false), "RELEASE");
+  assert.equal(lostOpportunityCalendarDisposition("BLOCKED", false), "BLOCK_OPERATIONAL");
+  assert.equal(lostOpportunityCalendarDisposition("OPTION", true), "BLOCK_SHOW");
+  assert.equal(lostOpportunityCalendarDisposition(null, false), "NONE");
+});
+
 test("prepara período padrão e valida ações de agenda", () => {
   assert.deepEqual(defaultOpportunityInterval("2026-10-10"), {
-    startDatetime: "2026-10-10T18:00:00.000Z",
-    endDatetime: "2026-10-10T23:00:00.000Z",
+    startDatetime: "2026-10-10T21:00:00.000Z",
+    endDatetime: "2026-10-11T02:00:00.000Z",
   });
   assert.equal(isOpportunityCalendarAction("OPTION"), true);
   assert.equal(isOpportunityCalendarAction("INVALID"), false);
@@ -54,6 +76,7 @@ test("ações comerciais verificam conflito e registram histórico", async () =>
   assert.match(route, /CALENDAR_CONFIRMED/);
   assert.match(route, /opportunity_calendar_entries/);
   assert.match(route, /opportunity\.organization_id=\?/);
+  assert.match(route, /canConfirmOpportunityDate/);
 });
 test("CLOSED_WON confirma agenda e prepara show de forma idempotente", async () => {
   const route = await readFile(

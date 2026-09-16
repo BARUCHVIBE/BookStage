@@ -28,6 +28,20 @@ export type FinancialItem = {
   totalAmount: number;
   status: (typeof financialItemStatuses)[number];
 };
+
+export function canManageOpportunityFinancialItems(role: Role) {
+  return ["OWNER", "MANAGER", "FINANCE", "SALES", "BOOKING_AGENT"].includes(
+    role,
+  );
+}
+
+export function canManageOpportunityCommissions(role: Role) {
+  return ["OWNER", "MANAGER", "FINANCE"].includes(role);
+}
+
+export function canApproveOpportunityFinance(role: Role) {
+  return role === "OWNER" || role === "FINANCE";
+}
 export function calculateItemTotal(quantity: number, unitAmount: number) {
   return Math.round((quantity * unitAmount) / 100);
 }
@@ -88,19 +102,25 @@ export function calculateOpportunityMargin(
 ) {
   const active = items.filter((item) => item.status !== "CANCELLED"),
     revenues = active.filter((item) => item.kind === "REVENUE"),
-    grossRevenue = revenues.length
-      ? revenues.reduce((sum, item) => sum + item.totalAmount, 0)
-      : fallbackRevenue,
+    feeRevenue = revenues
+      .filter((item) => item.category === "FEE")
+      .reduce((sum, item) => sum + item.totalAmount, 0),
+    additionalRevenue = revenues
+      .filter((item) => item.category !== "FEE")
+      .reduce((sum, item) => sum + item.totalAmount, 0),
+    grossRevenue = (feeRevenue || fallbackRevenue) + additionalRevenue,
+    commissions = active
+      .filter((item) => item.kind === "COST" && item.category === "COMMISSION")
+      .reduce((sum, item) => sum + item.totalAmount, 0),
     costs = active
-      .filter((item) => item.kind === "COST")
+      .filter(
+        (item) => item.kind === "COST" && item.category !== "COMMISSION",
+      )
       .reduce((sum, item) => sum + item.totalAmount, 0),
     taxes = active
       .filter((item) => item.kind === "COST" && item.category === "TAX")
       .reduce((sum, item) => sum + item.totalAmount, 0),
-    commissions = active
-      .filter((item) => item.kind === "COST" && item.category === "COMMISSION")
-      .reduce((sum, item) => sum + item.totalAmount, 0),
-    result = grossRevenue - costs;
+    result = grossRevenue - costs - commissions;
   return {
     grossRevenue,
     costs,
@@ -114,3 +134,4 @@ export function calculateOpportunityMargin(
         : null,
   };
 }
+import type { Role } from "./tenant";

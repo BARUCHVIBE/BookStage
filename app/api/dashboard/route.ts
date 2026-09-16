@@ -113,7 +113,7 @@ export async function GET(request: Request) {
           .bind(...opportunityBindings)
           .first<CountRow>(),
         env.DB.prepare(
-          `SELECT COUNT(*) AS count FROM shows show JOIN opportunities opportunity ON opportunity.id=show.opportunity_id AND opportunity.organization_id=show.organization_id WHERE show.organization_id=? AND date(show.created_at)>=? AND date(show.created_at)<=?${artistId ? " AND show.artist_id=?" : ""}${commercialScope}`,
+          `SELECT COUNT(*) AS count FROM shows show JOIN opportunities opportunity ON opportunity.id=show.opportunity_id AND opportunity.organization_id=show.organization_id WHERE show.organization_id=? AND show.status<>'CANCELLED' AND date(show.created_at)>=? AND date(show.created_at)<=?${artistId ? " AND show.artist_id=?" : ""}${commercialScope}`,
         )
           .bind(...opportunityBindings)
           .first<CountRow>(),
@@ -168,8 +168,13 @@ export async function GET(request: Request) {
     ]);
     agenda = {
       upcomingShows: shows.results,
-      options: options.results,
-      blocks: blocks.results,
+      // Booking collaborators use the calendar grid for availability. Keeping
+      // the internal OPTION/BLOCKED collections out of their dashboard avoids
+      // reintroducing statuses that the calendar API deliberately redacts.
+      options:
+        context.membership.role === "BOOKING_AGENT" ? [] : options.results,
+      blocks:
+        context.membership.role === "BOOKING_AGENT" ? [] : blocks.results,
     };
   }
   if (visibility.tasks) {
@@ -193,7 +198,7 @@ export async function GET(request: Request) {
           .bind(...taskBindings)
           .all(),
         env.DB.prepare(
-          `SELECT entry.id,entry.title,entry.start_datetime AS startDatetime,artist.name AS artistName FROM calendar_entries entry JOIN artists artist ON artist.id=entry.artist_id AND artist.organization_id=entry.organization_id LEFT JOIN opportunity_calendar_entries link ON link.calendar_entry_id=entry.id AND link.organization_id=entry.organization_id LEFT JOIN opportunities opportunity ON opportunity.id=link.opportunity_id AND opportunity.organization_id=link.organization_id WHERE entry.organization_id=? AND entry.status='OPTION' AND entry.start_datetime>=datetime('now') AND entry.start_datetime<=datetime('now','+14 days')${artistId ? " AND entry.artist_id=?" : ""}${commercialScope} ORDER BY entry.start_datetime LIMIT 6`,
+          `SELECT entry.id,entry.title,entry.start_datetime AS startDatetime,entry.option_expires_at AS optionExpiresAt,artist.name AS artistName FROM calendar_entries entry JOIN artists artist ON artist.id=entry.artist_id AND artist.organization_id=entry.organization_id LEFT JOIN opportunity_calendar_entries link ON link.calendar_entry_id=entry.id AND link.organization_id=entry.organization_id LEFT JOIN opportunities opportunity ON opportunity.id=link.opportunity_id AND opportunity.organization_id=link.organization_id WHERE entry.organization_id=? AND entry.status='OPTION' AND entry.option_expires_at IS NOT NULL AND entry.option_expires_at<=datetime('now','+2 days')${artistId ? " AND entry.artist_id=?" : ""}${commercialScope} ORDER BY entry.option_expires_at LIMIT 6`,
         )
           .bind(context.organizationId, ...operationalBindings)
           .all(),
@@ -202,7 +207,10 @@ export async function GET(request: Request) {
       stale: stale.results,
       overdueActions: overdueActions.results,
       todayActions: todayActions.results,
-      optionAttention: optionAttention.results,
+      optionAttention:
+        context.membership.role === "BOOKING_AGENT"
+          ? []
+          : optionAttention.results,
     };
   }
   if (visibility.finance) {

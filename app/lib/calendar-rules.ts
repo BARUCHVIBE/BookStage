@@ -46,6 +46,18 @@ export function canViewCalendarStatuses(role: Role) {
   return role !== "BOOKING_AGENT";
 }
 
+/**
+ * Entries linked to the CRM historically include their internal state in the
+ * title. Remove that prefix before presenting the title to Booking users, who
+ * are not allowed to infer internal calendar statuses.
+ */
+export function bookingVisibleCalendarTitle(title: string) {
+  return title.replace(
+    /^(?:Consulta|Opção|Show confirmado|Bloqueio)\s*·\s*/iu,
+    "",
+  );
+}
+
 export function normalizeCalendarInput(
   body: Record<string, unknown>,
 ): CalendarInput {

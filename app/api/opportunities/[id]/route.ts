@@ -4,9 +4,14 @@ import {
   conflictResponse,
   findBlockingConflict,
 } from "@/app/lib/calendar-access";
-import { defaultOpportunityInterval } from "@/app/lib/opportunity-calendar";
+import {
+  defaultOpportunityInterval,
+  lostOpportunityCalendarDisposition,
+} from "@/app/lib/opportunity-calendar";
+import { operationalTime } from "@/app/lib/operational-time";
 import {
   canAccessOpportunity,
+  canCloseOpportunity,
   canEditOpportunity,
   parseProposedValue,
   validateOpportunityStage,
@@ -64,6 +69,14 @@ async function linkedEntry(id: string, organizationId: string) {
 function clean(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
+function formatCommercialValue(value: number | null) {
+  return value === null
+    ? "não informado"
+    : new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+      }).format(value / 100);
+}
 
 export async function GET(
   _: Request,
@@ -113,6 +126,7 @@ export async function GET(
           .bind(context.organizationId)
           .all()
       ).results;
+  const calendarEntry = await linkedEntry(id, context.organizationId);
   return Response.json({
     opportunity,
     activities: activities.results,
@@ -130,6 +144,12 @@ export async function GET(
         context.membership.role === "BOOKING_AGENT" &&
         current.commercialApprovalStatus === "APPROVED"
       ),
+    canClose: canCloseOpportunity(
+      context.membership.role,
+      context.user.id,
+      current.commercialValidatorUserId,
+    ),
+    calendarStatus: calendarEntry?.status ?? null,
     role: context.membership.role,
   });
 }
@@ -180,6 +200,16 @@ export async function PATCH(
     string,
     unknown
   >;
+  if (
+    context.membership.role === "BOOKING_AGENT" &&
+    "stage" in body &&
+    body.stage !== current.stage &&
+    body.stage !== "CLOSED_LOST"
+  )
+    return Response.json(
+      { error: "A etapa é atualizada automaticamente pelas ações comerciais." },
+      { status: 409 },
+    );
   let stage = current.stage,
     assignedUserId = current.assignedUserId,
     originatorUserId = current.originatorUserId,
@@ -284,22 +314,47 @@ export async function PATCH(
   }
   let closingEntry: LinkedEntry | null = null,
     closingEntryId: string | null = null,
-    existingShow: { id: string } | null = null;
-  if (stage === "CLOSED_WON") {
-    if (!["OWNER", "MANAGER"].includes(context.membership.role))
-      return Response.json(
-        { error: "O fechamento definitivo exige validação comercial." },
-        { status: 403 },
-      );
+    existingShow: { id: string } | null = null,
+    losingEntry: LinkedEntry | null = null;
+  const valueChanged = proposedValue !== current.proposedValue;
+  if (valueChanged && ['CLOSED_WON', 'CLOSED_LOST'].includes(current.stage))
+    return Response.json({ error: 'O cachê de uma negociação encerrada não pode ser alterado.' }, { status: 409 });
+  if (valueChanged && stage === 'CLOSED_WON')
+    return Response.json({ error: 'Salve o novo cachê e solicite novas aprovações antes de fechar a venda.' }, { status: 409 });
+  if (valueChanged) {
+    const lockedCommission = await env.DB.prepare(`SELECT 1 FROM show_commissions WHERE opportunity_id=? AND organization_id=? AND status IN ('APPROVED','PAYABLE','PAID') LIMIT 1`).bind(id, context.organizationId).first();
+    if (lockedCommission)
+      return Response.json({ error: "Existem comissões aprovadas. Revise-as com o financeiro antes de alterar o cachê." }, { status: 409 });
+    if (!proposedValue) {
+      const percentageCommission = await env.DB.prepare(`SELECT 1 FROM show_commissions WHERE opportunity_id=? AND organization_id=? AND status='ESTIMATED' AND method='PERCENTAGE' AND calculation_base='GROSS_REVENUE' LIMIT 1`).bind(id, context.organizationId).first();
+      if (percentageCommission)
+        return Response.json({ error: "O cachê deve ser positivo enquanto houver comissão percentual estimada." }, { status: 409 });
+    }
+  }
+  // Closing effects belong to the transition, never to later edits/retries.
+  if (stage === "CLOSED_WON" && current.stage !== "CLOSED_WON") {
     if (
-      current.commercialApprovalStatus !== "APPROVED" ||
-      current.financialApprovalStatus !== "APPROVED"
+      !canCloseOpportunity(
+        context.membership.role,
+        context.user.id,
+        current.commercialValidatorUserId,
+      )
     )
       return Response.json(
         {
           error:
-            "A venda precisa das aprovações comercial e financeira antes do fechamento.",
+            "Somente o comercial responsável pela validação, um gerente ou o proprietário pode concluir esta venda.",
         },
+        { status: 403 },
+      );
+    if (current.commercialApprovalStatus !== "APPROVED")
+      return Response.json(
+        { error: "A aprovação comercial ainda está pendente." },
+        { status: 409 },
+      );
+    if (current.financialApprovalStatus !== "APPROVED")
+      return Response.json(
+        { error: "A aprovação financeira ainda está pendente." },
         { status: 409 },
       );
     const signedContract = await env.DB.prepare(
@@ -329,8 +384,8 @@ export async function PATCH(
         interval.endDatetime,
         closingEntry?.id,
       );
-    if (conflict) return conflictResponse(conflict);
-    closingEntryId = closingEntry?.id || crypto.randomUUID();
+if (conflict) return conflictResponse(conflict, context.membership.role);
+    closingEntryId = closingEntry?.id || id;
     existingShow =
       (await env.DB.prepare(
         `SELECT id FROM shows WHERE opportunity_id=? AND organization_id=?`,
@@ -338,22 +393,39 @@ export async function PATCH(
         .bind(id, context.organizationId)
         .first<{ id: string }>()) ?? null;
   }
+  if (stage === "CLOSED_LOST" && current.stage !== "CLOSED_LOST") {
+    const show = await env.DB.prepare(
+      `SELECT id FROM shows WHERE opportunity_id=? AND organization_id=?`,
+    )
+      .bind(id, context.organizationId)
+      .first();
+    losingEntry = (await linkedEntry(id, context.organizationId)) ?? null;
+    const disposition = lostOpportunityCalendarDisposition(
+      losingEntry?.status ?? null,
+      Boolean(show),
+    );
+    if (disposition === "BLOCK_SHOW")
+      return Response.json(
+        {
+          error:
+            "Esta oportunidade já possui um show. Cancele o show pelo fluxo operacional antes de registrar a perda.",
+        },
+        { status: 409 },
+      );
+    if (disposition === "BLOCK_OPERATIONAL")
+      return Response.json(
+        {
+          error:
+            "A data vinculada é um bloqueio operacional e não pode ser removida pelo encerramento comercial.",
+        },
+        { status: 409 },
+      );
+  }
   const statements = [];
-  statements.push(
-    env.DB.prepare(
-      `UPDATE opportunities SET assigned_user_id=?,originator_user_id=?,stage=?,proposed_value=?,notes=?,next_action=?,next_action_at=?,lost_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
-    ).bind(
-      assignedUserId,
-      originatorUserId,
-      stage,
-      proposedValue,
-      notes,
-      nextAction,
-      nextActionAt,
-      lostReason,
-      id,
-      context.organizationId,
-    ),
+  if (valueChanged) statements.push(
+    env.DB.prepare(`UPDATE opportunities SET commercial_approval_status=CASE WHEN commercial_approval_status IN ('APPROVED','PENDING','PENDING_APPROVAL') THEN 'CHANGES_REQUESTED' ELSE commercial_approval_status END,financial_approval_status=CASE WHEN financial_approval_status IN ('APPROVED','PENDING','PENDING_APPROVAL') THEN 'CHANGES_REQUESTED' ELSE financial_approval_status END WHERE id=? AND organization_id=?`).bind(id, context.organizationId),
+    env.DB.prepare(`UPDATE opportunity_approvals SET status='CHANGES_REQUESTED',updated_at=CURRENT_TIMESTAMP WHERE opportunity_id=? AND organization_id=? AND status='PENDING'`).bind(id, context.organizationId),
+    env.DB.prepare(`UPDATE show_commissions SET base_amount=?,amount=ROUND(?*percentage/10000.0),updated_at=CURRENT_TIMESTAMP WHERE opportunity_id=? AND organization_id=? AND status='ESTIMATED' AND method='PERCENTAGE' AND calculation_base='GROSS_REVENUE'`).bind(proposedValue ?? 0, proposedValue ?? 0, id, context.organizationId),
   );
   const addActivity = (
     type: string,
@@ -407,7 +479,7 @@ export async function PATCH(
   if (proposedValue !== current.proposedValue)
     addActivity(
       "VALUE_CHANGED",
-      "Valor proposto alterado.",
+      `Cachê proposto alterado de ${formatCommercialValue(current.proposedValue)} para ${formatCommercialValue(proposedValue)}.`,
       current.proposedValue === null ? null : String(current.proposedValue),
       proposedValue === null ? null : String(proposedValue),
     );
@@ -418,6 +490,19 @@ export async function PATCH(
       null,
       null,
     );
+  if (losingEntry) {
+    statements.push(
+      env.DB.prepare(
+        `DELETE FROM calendar_entries WHERE id=? AND organization_id=?`,
+      ).bind(losingEntry.id, context.organizationId),
+    );
+    addActivity(
+      "CALENDAR_RELEASED",
+      "Data liberada após o encerramento da negociação como perdida.",
+      losingEntry.status,
+      "AVAILABLE",
+    );
+  }
   if (stage === "CLOSED_WON" && closingEntryId) {
     const interval =
         closingEntry ?? defaultOpportunityInterval(current.eventDate),
@@ -431,7 +516,7 @@ export async function PATCH(
     else {
       statements.push(
         env.DB.prepare(
-          `INSERT INTO calendar_entries (id,organization_id,artist_id,start_datetime,end_datetime,status,title,internal_notes,created_by) VALUES (?,?,?,?,?,'CONFIRMED',?,?,?)`,
+          `INSERT OR IGNORE INTO calendar_entries (id,organization_id,artist_id,start_datetime,end_datetime,status,title,internal_notes,created_by) VALUES (?,?,?,?,?,'CONFIRMED',?,?,?)`,
         ).bind(
           closingEntryId,
           context.organizationId,
@@ -445,7 +530,7 @@ export async function PATCH(
       );
       statements.push(
         env.DB.prepare(
-          `INSERT INTO opportunity_calendar_entries (organization_id,opportunity_id,calendar_entry_id) VALUES (?,?,?)`,
+          `INSERT OR IGNORE INTO opportunity_calendar_entries (organization_id,opportunity_id,calendar_entry_id) VALUES (?,?,?)`,
         ).bind(context.organizationId, id, closingEntryId),
       );
     }
@@ -456,9 +541,9 @@ export async function PATCH(
         closingEntry?.status ?? null,
         "CONFIRMED",
       );
-    const showId = existingShow?.id || crypto.randomUUID(),
+    const showId = existingShow?.id || id,
       eventName = `${current.artistName} · ${current.eventType}`,
-      showTime = interval.startDatetime.slice(11, 16);
+      showTime = operationalTime(interval.startDatetime);
     statements.push(
       env.DB.prepare(
         `INSERT OR IGNORE INTO shows (id,organization_id,opportunity_id,artist_id,customer_id,calendar_entry_id,event_name,date,show_time,venue,city,state,fee,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'CONFIRMED')`,
@@ -504,6 +589,11 @@ export async function PATCH(
         `UPDATE contracts SET show_id=COALESCE(show_id,?),updated_at=CURRENT_TIMESTAMP WHERE opportunity_id=? AND organization_id=?`,
       ).bind(showId, id, context.organizationId),
     );
+    statements.push(
+      env.DB.prepare(
+        `UPDATE payments SET show_id=COALESCE(show_id,?),updated_at=CURRENT_TIMESTAMP WHERE opportunity_id=? AND organization_id=?`,
+      ).bind(showId, id, context.organizationId),
+    );
     if (!existingShow) {
       statements.push(
         env.DB.prepare(
@@ -528,6 +618,24 @@ export async function PATCH(
       ).bind(crypto.randomUUID(), id, context.organizationId),
     );
   }
+  // Keep the stage transition last: database guards then prevent concurrent
+  // requests from changing the linked calendar after the deal is terminal.
+  statements.push(
+    env.DB.prepare(
+      `UPDATE opportunities SET assigned_user_id=?,originator_user_id=?,stage=?,proposed_value=?,notes=?,next_action=?,next_action_at=?,lost_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+    ).bind(
+      assignedUserId,
+      originatorUserId,
+      stage,
+      proposedValue,
+      notes,
+      nextAction,
+      nextActionAt,
+      lostReason,
+      id,
+      context.organizationId,
+    ),
+  );
   try {
     await env.DB.batch(statements);
   } catch (error) {
@@ -541,8 +649,16 @@ export async function PATCH(
           interval.endDatetime,
           closingEntry?.id,
         );
-      if (latest) return conflictResponse(latest);
+if (latest) return conflictResponse(latest, context.membership.role);
     }
+    if (String(error).includes("OPPORTUNITY_CLOSED"))
+      return Response.json(
+        {
+          error:
+            "A oportunidade foi encerrada por outra operação. Nenhuma alteração foi salva.",
+        },
+        { status: 409 },
+      );
     throw error;
   }
   return Response.json({ ok: true, showPrepared: stage === "CLOSED_WON" });

@@ -3,6 +3,7 @@
 import { Save } from "lucide-react";
 import { useState } from "react";
 import type { OrganizationProfile } from "./types";
+import { fetchJson } from "@/app/lib/http-client";
 
 export function CompanyProfileSettings({
   organization,
@@ -23,14 +24,13 @@ export function CompanyProfileSettings({
     [message, setMessage] = useState("");
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    const response = await fetch(`/api/organizations/${organization.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/organizations/${organization.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...form, logo: organization.logo ?? null }),
-      }),
-      data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível salvar o perfil.");
+      });
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível salvar o perfil.");
       return;
     }
     onUpdated({ ...organization, ...form });

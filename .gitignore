@@ -42,3 +42,6 @@ yarn-error.log*
 /outputs/
 /output/
 /work/
+
+# local migration snapshots and remote backups (may contain private tenant data)
+/.bookstage-migration/

@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { requireActiveMembership } from "@/app/lib/active-membership";
 import {
   BRANDING_ASSET_LIMITS,
+  brandingAssetKey,
+  brandingAssetUrl,
   hasValidImageSignature,
   type BrandingAssetKind,
 } from "@/app/lib/branding-assets";
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   const token = crypto.randomUUID(),
-    key = `public-branding/${token}`;
+    key = brandingAssetKey(token);
   await env.FILES.put(key, asset.stream(), {
     httpMetadata: { contentType: asset.type },
     customMetadata: {
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
     },
   });
   return Response.json(
-    { url: `/api/public/branding-assets/${token}` },
+    { url: brandingAssetUrl(token) },
     { status: 201 },
   );
 }

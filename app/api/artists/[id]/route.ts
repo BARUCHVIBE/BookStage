@@ -4,10 +4,20 @@ import {
   canManageArtistAssignments,
   canViewArtist,
 } from "@/app/lib/artist-access";
+import {
+  artistAssetKey,
+  artistAssetToken,
+  normalizeArtistImageUrl,
+} from "@/app/lib/artist-assets";
+import {
+  importDiscordArtistAsset,
+  isDiscordArtistAssetUrl,
+} from "@/app/lib/remote-artist-assets";
 import { makeSlug } from "@/app/lib/tenant";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
 import { hasGlobalArtistAccess } from "@/app/lib/member-access";
 import { canAccessArtist } from "@/app/lib/member-access";
+import { getArtistPrimaryCommercial } from "@/app/lib/artist-sales";
 
 export async function GET(
   _: Request,
@@ -23,11 +33,15 @@ export async function GET(
     .first();
   if (!artist)
     return Response.json({ error: "Artista não encontrado." }, { status: 404 });
-  const assignments = await env.DB.prepare(
-    `SELECT u.id,u.name,u.email,m.role,a.is_primary AS isPrimary FROM artist_sales_assignments a JOIN users u ON u.id=a.user_id JOIN memberships m ON m.organization_id=a.organization_id AND m.user_id=a.user_id WHERE a.artist_id=? AND a.organization_id=? AND m.status='ACTIVE' AND m.professional_role IS NULL ORDER BY a.is_primary DESC,u.name`,
-  )
-    .bind(id, context.organizationId)
-    .all();
+  const primaryCommercial = await getArtistPrimaryCommercial(
+      context.organizationId,
+      id,
+    ),
+    authorizedAssignments = await env.DB.prepare(
+      `SELECT u.id,u.name,u.email,m.role,0 AS isPrimary FROM artist_sales_assignments a JOIN users u ON u.id=a.user_id JOIN memberships m ON m.organization_id=a.organization_id AND m.user_id=a.user_id WHERE a.artist_id=? AND a.organization_id=? AND a.is_primary=0 AND m.status='ACTIVE' AND m.professional_role IS NULL AND m.role IN ('OWNER','MANAGER','SALES') ORDER BY u.name`,
+    )
+      .bind(id, context.organizationId)
+      .all();
   const bookingCollaborators = await env.DB.prepare(
     `SELECT user.id,user.name,user.email,'ACTIVE' AS status FROM memberships membership JOIN users user ON user.id=membership.user_id WHERE membership.organization_id=? AND membership.status='ACTIVE' AND membership.professional_role='BOOKING_AGENT' AND (membership.artist_access_scope='ALL' OR EXISTS (SELECT 1 FROM booking_collaborator_artist_access access WHERE access.organization_id=membership.organization_id AND access.user_id=membership.user_id AND access.artist_id=? AND access.status='ACTIVE')) ORDER BY user.name`,
   )
@@ -47,12 +61,31 @@ export async function GET(
     ));
   if (!canViewArtist(context.membership.role, isAssigned))
     return Response.json({ error: "Artista não encontrado." }, { status: 404 });
-  return Response.json({
-    artist,
-    assignments: assignments.results,
-    bookingCollaborators: bookingCollaborators.results,
-    canManageAssignments: canManageArtistAssignments(context.membership.role),
-  });
+  return Response.json(
+    {
+      artist,
+      primaryCommercial,
+      assignments: [
+        ...(primaryCommercial
+          ? [
+              {
+                id: primaryCommercial.userId,
+                name: primaryCommercial.name,
+                email: primaryCommercial.email,
+                role: primaryCommercial.role,
+                isPrimary: 1,
+              },
+            ]
+          : []),
+        ...authorizedAssignments.results,
+      ],
+      bookingCollaborators: bookingCollaborators.results,
+      canManageAssignments: canManageArtistAssignments(
+        context.membership.role,
+      ),
+    },
+    { headers: { "cache-control": "private, no-store" } },
+  );
 }
 
 export async function PATCH(
@@ -70,10 +103,16 @@ export async function PATCH(
     );
   const { id } = await routeContext.params;
   const existing = await env.DB.prepare(
-    `SELECT id,name,slug FROM artists WHERE id=? AND organization_id=?`,
+    `SELECT id,name,slug,photo_url AS photoUrl,cover_url AS coverUrl FROM artists WHERE id=? AND organization_id=?`,
   )
     .bind(id, context.organizationId)
-    .first<{ id: string; name: string; slug: string | null }>();
+    .first<{
+      id: string;
+      name: string;
+      slug: string | null;
+      photoUrl: string | null;
+      coverUrl: string | null;
+    }>();
   if (!existing)
     return Response.json({ error: "Artista não encontrado." }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as Record<
@@ -138,6 +177,65 @@ export async function PATCH(
       { error: "Esta URL pública já está em uso." },
       { status: 409 },
     );
+  const validatedImages = new Map<string, string | null>(),
+    importedKeys: string[] = [];
+  for (const [key, label, kind] of [
+    ["photoUrl", "Foto", "photo"],
+    ["coverUrl", "Capa", "cover"],
+  ] as const) {
+    if (!(key in body)) continue;
+    let normalized: string | null;
+    try {
+      normalized = normalizeArtistImageUrl(text(key), label);
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof Error ? error.message : `${label} inválida.` },
+        { status: 400 },
+      );
+    }
+    if (normalized && isDiscordArtistAssetUrl(normalized)) {
+      try {
+        const imported = await importDiscordArtistAsset({
+          bucket: env.FILES,
+          sourceUrl: normalized,
+          organizationId: context.organizationId,
+          artistId: id,
+          kind,
+        });
+        importedKeys.push(imported.key);
+        normalized = imported.url;
+      } catch (error) {
+        await Promise.all(importedKeys.map((item) => env.FILES.delete(item)));
+        return Response.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : `Não foi possível importar a ${label.toLowerCase()}.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+    const token = artistAssetToken(normalized);
+    if (token) {
+      const object = await env.FILES.head(artistAssetKey(token));
+      const previousUrl = kind === "photo" ? existing.photoUrl : existing.coverUrl;
+      const alreadyOwned = normalized === previousUrl;
+      if (
+        !object ||
+        (!alreadyOwned &&
+          (object.customMetadata?.organizationId !== context.organizationId ||
+            object.customMetadata?.artistId !== id ||
+            object.customMetadata?.kind !== kind))
+      )
+        return Response.json(
+          { error: `${label} não pertence a este artista e organização.` },
+          { status: 400 },
+        );
+    }
+    validatedImages.set(key, normalized);
+  }
   const mapping = [
     ["photoUrl", "photo_url"],
     ["coverUrl", "cover_url"],
@@ -155,7 +253,11 @@ export async function PATCH(
   if ("name" in body) changes.push({ column: "name", value: name });
   if ("slug" in body) changes.push({ column: "slug", value: requestedSlug });
   for (const [key, column] of mapping)
-    if (key in body) changes.push({ column, value: text(key) });
+    if (key in body)
+      changes.push({
+        column,
+        value: validatedImages.has(key) ? validatedImages.get(key)! : text(key),
+      });
   if ("isPublic" in body)
     changes.push({
       column: "is_public",
@@ -166,10 +268,15 @@ export async function PATCH(
       { error: "Informe ao menos um campo para atualizar." },
       { status: 400 },
     );
-  await env.DB.prepare(
-    `UPDATE artists SET ${changes.map((change) => `${change.column}=?`).join(",")},updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
-  )
-    .bind(...changes.map((change) => change.value), id, context.organizationId)
-    .run();
+  try {
+    await env.DB.prepare(
+      `UPDATE artists SET ${changes.map((change) => `${change.column}=?`).join(",")},updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+    )
+      .bind(...changes.map((change) => change.value), id, context.organizationId)
+      .run();
+  } catch (error) {
+    await Promise.all(importedKeys.map((item) => env.FILES.delete(item)));
+    throw error;
+  }
   return Response.json({ ok: true, slug: requestedSlug });
 }

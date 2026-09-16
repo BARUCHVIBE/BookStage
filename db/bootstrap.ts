@@ -218,10 +218,19 @@ async function initialize() {
       `CREATE INDEX IF NOT EXISTS idx_opportunity_activities_timeline ON opportunity_activities(organization_id,opportunity_id,created_at)`,
     ),
     db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_opportunity_terminal_stage_update BEFORE UPDATE OF stage ON opportunities WHEN OLD.stage IN ('CLOSED_WON','CLOSED_LOST') AND NEW.stage<>OLD.stage BEGIN SELECT RAISE(ABORT,'OPPORTUNITY_CLOSED'); END`,
+    ),
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS opportunity_calendar_entries (organization_id TEXT NOT NULL, opportunity_id TEXT NOT NULL, calendar_entry_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(organization_id,opportunity_id), CONSTRAINT fk_opportunity_calendar_opportunity_tenant FOREIGN KEY(opportunity_id,organization_id) REFERENCES opportunities(id,organization_id) ON DELETE CASCADE, CONSTRAINT fk_opportunity_calendar_entry_tenant FOREIGN KEY(calendar_entry_id,organization_id) REFERENCES calendar_entries(id,organization_id) ON DELETE CASCADE)`,
     ),
     db.prepare(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunity_calendar_entry ON opportunity_calendar_entries(organization_id,calendar_entry_id)`,
+    ),
+    db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_opportunity_calendar_link_open BEFORE INSERT ON opportunity_calendar_entries WHEN EXISTS (SELECT 1 FROM opportunities opportunity WHERE opportunity.id=NEW.opportunity_id AND opportunity.organization_id=NEW.organization_id AND opportunity.stage IN ('CLOSED_WON','CLOSED_LOST')) BEGIN SELECT RAISE(ABORT,'OPPORTUNITY_CLOSED'); END`,
+    ),
+    db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_opportunity_calendar_activity_open BEFORE INSERT ON opportunity_activities WHEN NEW.type IN ('CALENDAR_INQUIRY','CALENDAR_OPTION','CALENDAR_OPTION_CANCELLED','CALENDAR_CONFIRMED') AND EXISTS (SELECT 1 FROM opportunities opportunity WHERE opportunity.id=NEW.opportunity_id AND opportunity.organization_id=NEW.organization_id AND opportunity.stage IN ('CLOSED_WON','CLOSED_LOST')) BEGIN SELECT RAISE(ABORT,'OPPORTUNITY_CLOSED'); END`,
     ),
     db.prepare(
       `CREATE TABLE IF NOT EXISTS shows (id TEXT PRIMARY KEY NOT NULL, organization_id TEXT NOT NULL, opportunity_id TEXT NOT NULL, artist_id TEXT NOT NULL, customer_id TEXT NOT NULL, calendar_entry_id TEXT NOT NULL, event_name TEXT NOT NULL DEFAULT '', date TEXT NOT NULL DEFAULT '', show_time TEXT, venue TEXT, city TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '', address TEXT, fee INTEGER, status TEXT NOT NULL DEFAULT 'CONFIRMED', local_contact_name TEXT, local_contact_phone TEXT, producer_user_id TEXT, soundcheck_at TEXT, hotel TEXT, transportation TEXT, airport TEXT, dressing_room TEXT, technical_info TEXT, production_notes TEXT, rider_file_key TEXT, rider_file_name TEXT, rider_file_type TEXT, rider_file_size INTEGER, stage_map_file_key TEXT, stage_map_file_name TEXT, stage_map_file_type TEXT, stage_map_file_size INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(id,organization_id), CONSTRAINT fk_show_opportunity_tenant FOREIGN KEY(opportunity_id,organization_id) REFERENCES opportunities(id,organization_id), CONSTRAINT fk_show_artist_tenant FOREIGN KEY(artist_id,organization_id) REFERENCES artists(id,organization_id), CONSTRAINT fk_show_customer_tenant FOREIGN KEY(customer_id,organization_id) REFERENCES customers(id,organization_id), CONSTRAINT fk_show_calendar_entry_tenant FOREIGN KEY(calendar_entry_id,organization_id) REFERENCES calendar_entries(id,organization_id), CONSTRAINT fk_show_producer_tenant FOREIGN KEY(organization_id,producer_user_id) REFERENCES memberships(organization_id,user_id))`,
@@ -245,19 +254,25 @@ async function initialize() {
       `CREATE INDEX IF NOT EXISTS idx_payments_status_due ON payments(organization_id,status,due_date)`,
     ),
     db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_payment_total_insert BEFORE INSERT ON payments WHEN NEW.status<>'CANCELLED' AND (COALESCE((SELECT SUM(payment.amount) FROM payments payment WHERE payment.organization_id=NEW.organization_id AND payment.show_id=NEW.show_id AND payment.status<>'CANCELLED'),0)+NEW.amount)>COALESCE((SELECT show.fee FROM shows show WHERE show.id=NEW.show_id AND show.organization_id=NEW.organization_id),0) BEGIN SELECT RAISE(ABORT,'PAYMENT_TOTAL_EXCEEDED'); END`,
+    ),
+    db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_payment_total_update BEFORE UPDATE OF amount,status,show_id,organization_id ON payments WHEN NEW.status<>'CANCELLED' AND (COALESCE((SELECT SUM(payment.amount) FROM payments payment WHERE payment.organization_id=NEW.organization_id AND payment.show_id=NEW.show_id AND payment.status<>'CANCELLED' AND payment.id<>OLD.id),0)+NEW.amount)>COALESCE((SELECT show.fee FROM shows show WHERE show.id=NEW.show_id AND show.organization_id=NEW.organization_id),0) BEGIN SELECT RAISE(ABORT,'PAYMENT_TOTAL_EXCEEDED'); END`,
+    ),
+    db.prepare(
+      `CREATE TRIGGER IF NOT EXISTS trg_show_fee_payment_consistency BEFORE UPDATE OF fee ON shows WHEN COALESCE((SELECT SUM(payment.amount) FROM payments payment WHERE payment.organization_id=NEW.organization_id AND payment.show_id=NEW.id AND payment.status<>'CANCELLED'),0)>COALESCE(NEW.fee,0) BEGIN SELECT RAISE(ABORT,'PAYMENT_TOTAL_EXCEEDED'); END`,
+    ),
+    db.prepare(
       `CREATE TABLE IF NOT EXISTS show_commissions (id TEXT PRIMARY KEY NOT NULL, organization_id TEXT NOT NULL, show_id TEXT NOT NULL, user_id TEXT NOT NULL, percentage INTEGER NOT NULL CHECK(percentage>0 AND percentage<=10000), amount INTEGER NOT NULL CHECK(amount>=0), status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','PAID','CANCELLED')), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(id,organization_id), UNIQUE(organization_id,show_id,user_id), CONSTRAINT fk_commission_show_tenant FOREIGN KEY(show_id,organization_id) REFERENCES shows(id,organization_id) ON DELETE CASCADE, CONSTRAINT fk_commission_user_tenant FOREIGN KEY(organization_id,user_id) REFERENCES memberships(organization_id,user_id))`,
     ),
     db.prepare(
       `CREATE INDEX IF NOT EXISTS idx_show_commissions_status ON show_commissions(organization_id,status)`,
     ),
     db.prepare(
-      `CREATE TRIGGER IF NOT EXISTS trg_commission_amount_insert BEFORE INSERT ON show_commissions WHEN NEW.amount<>ROUND(COALESCE((SELECT fee FROM shows WHERE id=NEW.show_id AND organization_id=NEW.organization_id),0)*NEW.percentage/10000.0) BEGIN SELECT RAISE(ABORT,'COMMISSION_AMOUNT_MISMATCH'); END`,
+      `CREATE TRIGGER IF NOT EXISTS trg_commission_amount_insert BEFORE INSERT ON show_commissions WHEN (NEW.method='PERCENTAGE' AND (NEW.percentage IS NULL OR NEW.percentage<=0 OR NEW.percentage>10000 OR NEW.base_amount<=0 OR NEW.amount<>ROUND(NEW.base_amount*NEW.percentage/10000.0))) OR (NEW.method='FIXED' AND (NEW.percentage IS NOT NULL OR NEW.base_amount<>0 OR NEW.amount<=0)) BEGIN SELECT RAISE(ABORT,'COMMISSION_AMOUNT_MISMATCH'); END`,
     ),
     db.prepare(
-      `CREATE TRIGGER IF NOT EXISTS trg_commission_amount_update BEFORE UPDATE OF percentage,amount,show_id,organization_id ON show_commissions WHEN NEW.amount<>ROUND(COALESCE((SELECT fee FROM shows WHERE id=NEW.show_id AND organization_id=NEW.organization_id),0)*NEW.percentage/10000.0) BEGIN SELECT RAISE(ABORT,'COMMISSION_AMOUNT_MISMATCH'); END`,
-    ),
-    db.prepare(
-      `CREATE TRIGGER IF NOT EXISTS trg_show_fee_commission_consistency BEFORE UPDATE OF fee ON shows WHEN EXISTS (SELECT 1 FROM show_commissions commission WHERE commission.show_id=NEW.id AND commission.organization_id=NEW.organization_id AND commission.status<>'CANCELLED' AND commission.amount<>ROUND(COALESCE(NEW.fee,0)*commission.percentage/10000.0)) BEGIN SELECT RAISE(ABORT,'COMMISSION_AMOUNT_MISMATCH'); END`,
+      `CREATE TRIGGER IF NOT EXISTS trg_commission_amount_update BEFORE UPDATE OF method,percentage,base_amount,amount ON show_commissions WHEN (NEW.method='PERCENTAGE' AND (NEW.percentage IS NULL OR NEW.percentage<=0 OR NEW.percentage>10000 OR NEW.base_amount<=0 OR NEW.amount<>ROUND(NEW.base_amount*NEW.percentage/10000.0))) OR (NEW.method='FIXED' AND (NEW.percentage IS NOT NULL OR NEW.base_amount<>0 OR NEW.amount<=0)) BEGIN SELECT RAISE(ABORT,'COMMISSION_AMOUNT_MISMATCH'); END`,
     ),
     db.prepare(
       `CREATE TABLE IF NOT EXISTS proposal_sequences (organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, year INTEGER NOT NULL, next_number INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(organization_id,year))`,

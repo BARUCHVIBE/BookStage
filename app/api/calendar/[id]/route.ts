@@ -97,7 +97,7 @@ export async function PUT(
       input.endDatetime,
       id,
     );
-    if (conflict) return conflictResponse(conflict);
+    if (conflict) return conflictResponse(conflict, context.membership.role);
   }
   try {
     const canViewInternalNotes = canViewCalendarInternalNotes(
@@ -127,7 +127,7 @@ export async function PUT(
         input.endDatetime,
         id,
       );
-      if (conflict) return conflictResponse(conflict);
+      if (conflict) return conflictResponse(conflict, context.membership.role);
     }
     throw error;
   }

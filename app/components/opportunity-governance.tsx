@@ -4,12 +4,21 @@ import {
   BadgeCheck,
   Check,
   CircleDollarSign,
+  Pencil,
   Plus,
+  RefreshCw,
   Send,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
+import {
+  approvalStatusLabel,
+  commissionStatusLabel,
+  commissionTypeLabel,
+} from "@/app/lib/status-labels";
 type Approval = {
   id: string;
   kind: "COMMERCIAL" | "FINANCIAL";
@@ -44,10 +53,19 @@ type Commission = {
   userName: string;
   type: string;
   method: string;
+  calculationBase: string;
   percentage: number | null;
   baseAmount: number;
   amount: number;
   status: string;
+};
+type Beneficiary = {
+  userId: string;
+  name: string;
+  baseRole: string;
+  professionalRole: string | null;
+  role: string;
+  status: "ACTIVE";
 };
 const money = (value: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
@@ -78,15 +96,22 @@ export function OpportunityGovernance({
     [items, setItems] = useState<Item[]>([]),
     [summary, setSummary] = useState<Summary | null>(null),
     [financialStatus, setFinancialStatus] = useState(""),
+    [canManageItems, setCanManageItems] = useState(false),
     [commissions, setCommissions] = useState<Commission[]>([]),
-    [members, setMembers] = useState<
-      Array<{ id: string; name: string; role: string }>
-    >([]),
+    [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]),
     [canManageCommission, setCanManageCommission] = useState(false),
     [message, setMessage] = useState(""),
+    [approvalError, setApprovalError] = useState(""),
+    [financeError, setFinanceError] = useState(""),
+    [commissionError, setCommissionError] = useState(""),
+    [loadingFinance, setLoadingFinance] = useState(true),
+    [loadingCommissions, setLoadingCommissions] = useState(true),
     [busy, setBusy] = useState(false),
     [costOpen, setCostOpen] = useState(false),
-    [commissionOpen, setCommissionOpen] = useState(false);
+    [commissionOpen, setCommissionOpen] = useState(false),
+    [editingCostId, setEditingCostId] = useState<string | null>(null),
+    [editingCommissionId, setEditingCommissionId] = useState<string | null>(null);
+  const mutationLock = useRef(false);
   const [cost, setCost] = useState({
       kind: "COST",
       category: "TRANSPORT",
@@ -103,33 +128,43 @@ export function OpportunityGovernance({
       amount: "",
     });
   const load = useCallback(async () => {
+    setLoadingFinance(true);
+    setLoadingCommissions(true);
     const [a, f, c] = await Promise.all([
-        fetch(`/api/opportunities/${opportunityId}/approvals`),
-        fetch(`/api/opportunities/${opportunityId}/finance`),
-        fetch(`/api/opportunities/${opportunityId}/commissions`),
+        fetchJson<Record<string, unknown>>(
+          `/api/opportunities/${opportunityId}/approvals`,
+        ),
+        fetchJson<Record<string, unknown>>(
+          `/api/opportunities/${opportunityId}/finance`,
+        ),
+        fetchJson<Record<string, unknown>>(
+          `/api/opportunities/${opportunityId}/commissions`,
+        ),
       ]),
-      [ad, fd, cd] = (await Promise.all([
-        a.json(),
-        f.json(),
-        c.json(),
-      ])) as Array<Record<string, unknown>>;
+      ad = a.data || {},
+      fd = f.data || {},
+      cd = c.data || {};
     if (a.ok) {
       setApprovals((ad.approvals as Approval[]) || []);
       setRole(String(ad.role || ""));
       setCanReviewCommercial(Boolean(ad.canReviewCommercial));
-    }
+      setApprovalError("");
+    } else setApprovalError(a.error || "Não foi possível carregar as aprovações.");
     if (f.ok) {
       setItems((fd.items as Item[]) || []);
       setSummary(fd.summary as Summary);
       setFinancialStatus(String(fd.approvalStatus || ""));
-    }
+      setCanManageItems(Boolean(fd.canManage));
+      setFinanceError("");
+    } else setFinanceError(f.error || "Não foi possível carregar os itens financeiros.");
     if (c.ok) {
       setCommissions((cd.commissions as Commission[]) || []);
-      setMembers(
-        (cd.members as Array<{ id: string; name: string; role: string }>) || [],
-      );
+      setBeneficiaries((cd.beneficiaries as Beneficiary[]) || []);
       setCanManageCommission(Boolean(cd.canManage));
-    }
+      setCommissionError("");
+    } else setCommissionError(c.error || "Não foi possível carregar as comissões.");
+    setLoadingFinance(false);
+    setLoadingCommissions(false);
   }, [opportunityId]);
   useEffect(() => {
     void load();
@@ -138,23 +173,27 @@ export function OpportunityGovernance({
     kind: "COMMERCIAL" | "FINANCIAL",
     action: "REQUEST" | "APPROVE" | "REJECT" | "REQUEST_CHANGES",
   ) {
-    const notes =
+    if (mutationLock.current) return;
+    const prompted =
       action === "REQUEST"
         ? null
-        : window.prompt("Observação da decisão (opcional):") || null;
+        : window.prompt("Observação da decisão (opcional):");
+    if (action !== "REQUEST" && prompted === null) return;
+    const notes = prompted?.trim() || null;
+    mutationLock.current = true;
     setBusy(true);
-    const response = await fetch(
-        `/api/opportunities/${opportunityId}/approvals`,
-        {
+    const result = await fetchJson<{ error?: string }>(
+      `/api/opportunities/${opportunityId}/approvals`,
+      {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ kind, action, notes }),
-        },
-      ),
-      data = (await response.json()) as { error?: string };
+      },
+    );
+    mutationLock.current = false;
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível registrar a aprovação.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível registrar a aprovação.");
       return;
     }
     setMessage("Fluxo de aprovação atualizado.");
@@ -163,52 +202,92 @@ export function OpportunityGovernance({
   }
   async function addCost(event: React.FormEvent) {
     event.preventDefault();
+    if (mutationLock.current) return;
+    mutationLock.current = true;
     setBusy(true);
-    const response = await fetch(
-        `/api/opportunities/${opportunityId}/finance`,
-        {
-          method: "POST",
+    const result = await fetchJson<{ error?: string }>(
+      `/api/opportunities/${opportunityId}/finance`,
+      {
+          method: editingCostId ? "PATCH" : "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             ...cost,
+            id: editingCostId,
             quantity: Math.round(Number(cost.quantity) * 100),
             unitAmount: Math.round(Number(cost.unitAmount) * 100),
           }),
-        },
-      ),
-      data = (await response.json()) as { error?: string };
+      },
+    );
+    mutationLock.current = false;
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível criar o item.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível salvar o item.");
       return;
     }
     setCostOpen(false);
+    setEditingCostId(null);
     setCost({ ...cost, description: "", unitAmount: "", notes: "" });
     await load();
     await refresh();
   }
   async function addCommission(event: React.FormEvent) {
     event.preventDefault();
+    if (mutationLock.current) return;
+    mutationLock.current = true;
     setBusy(true);
-    const response = await fetch(
-        `/api/opportunities/${opportunityId}/commissions`,
-        {
-          method: "POST",
+    const result = await fetchJson<{ error?: string }>(
+      `/api/opportunities/${opportunityId}/commissions`,
+      {
+          method: editingCommissionId ? "PATCH" : "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             ...commission,
+            id: editingCommissionId,
+            action: editingCommissionId ? "UPDATE" : undefined,
+            beneficiaryUserId: commission.userId,
             amount: Math.round(Number(commission.amount) * 100),
           }),
-        },
-      ),
-      data = (await response.json()) as { error?: string };
+      },
+    );
+    mutationLock.current = false;
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível criar a comissão.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível salvar a comissão.");
       return;
     }
     setCommissionOpen(false);
+    setEditingCommissionId(null);
+    setCommission({
+      userId: "",
+      type: "REFERRAL",
+      method: "PERCENTAGE",
+      percentage: "",
+      amount: "",
+    });
     await load();
+  }
+
+  async function cancelCost(id: string) {
+    if (mutationLock.current || !window.confirm("Remover este item financeiro?"))
+      return;
+    mutationLock.current = true;
+    setBusy(true);
+    const result = await fetchJson<{ error?: string }>(
+      `/api/opportunities/${opportunityId}/finance`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, status: "CANCELLED" }),
+      },
+    );
+    mutationLock.current = false;
+    setBusy(false);
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível remover o item.");
+      return;
+    }
+    await load();
+    await refresh();
   }
   const pending = (kind: string) =>
       approvals.find((item) => item.kind === kind && item.status === "PENDING"),
@@ -223,6 +302,9 @@ export function OpportunityGovernance({
         </div>
       </div>
       {message && <div className="notice">{message}</div>}
+      {approvalError && (
+        <SectionError message={approvalError} retry={load} />
+      )}
       <div className="approval-grid">
         <ApprovalCard
           title="Aprovação comercial"
@@ -263,14 +345,21 @@ export function OpportunityGovernance({
             <p className="eyebrow">Resultado estimado</p>
             <h3>Receitas e custos</h3>
           </div>
-          <button
-            className="button button-secondary"
-            onClick={() => setCostOpen((value) => !value)}
-          >
-            <Plus />
-            Adicionar item
-          </button>
+          {canManageItems && (
+            <button
+              className="button button-secondary"
+              onClick={() => {
+                setEditingCostId(null);
+                setCostOpen((value) => !value);
+              }}
+            >
+              <Plus />
+              Adicionar item
+            </button>
+          )}
         </header>
+        {financeError && <SectionError message={financeError} retry={load} />}
+        {loadingFinance && <p className="table-empty">Carregando valores…</p>}
         {summary && (
           <div className="margin-metrics">
             <Metric label="Receita bruta" value={money(summary.grossRevenue)} />
@@ -365,7 +454,7 @@ export function OpportunityGovernance({
             </div>
             <button className="button button-primary" disabled={busy}>
               <Check />
-              Salvar item
+              {busy ? "Salvando…" : editingCostId ? "Salvar alterações" : "Salvar item"}
             </button>
           </form>
         )}
@@ -384,6 +473,37 @@ export function OpportunityGovernance({
                 </small>
               </div>
               <strong>{money(item.totalAmount)}</strong>
+              {canManageItems && (
+                <div className="financial-row-actions">
+                  <button
+                    type="button"
+                    aria-label={`Editar ${item.description}`}
+                    disabled={busy}
+                    onClick={() => {
+                      setEditingCostId(item.id);
+                      setCost({
+                        kind: item.kind,
+                        category: item.category,
+                        description: item.description,
+                        quantity: String(item.quantity / 100),
+                        unitAmount: String(item.unitAmount / 100),
+                        notes: "",
+                      });
+                      setCostOpen(true);
+                    }}
+                  >
+                    <Pencil />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remover ${item.description}`}
+                    disabled={busy}
+                    onClick={() => void cancelCost(item.id)}
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
+              )}
             </article>
           ))}
           {!items.length && (
@@ -410,6 +530,12 @@ export function OpportunityGovernance({
             </button>
           )}
         </header>
+        {commissionError && (
+          <SectionError message={commissionError} retry={load} />
+        )}
+        {loadingCommissions && (
+          <p className="table-empty">Carregando comissões…</p>
+        )}
         {commissionOpen && (
           <form className="finance-form" onSubmit={addCommission}>
             <div className="form-row">
@@ -423,8 +549,8 @@ export function OpportunityGovernance({
                   }
                 >
                   <option value="">Selecione</option>
-                  {members.map((member) => (
-                    <option value={member.id} key={member.id}>
+                  {beneficiaries.map((member) => (
+                    <option value={member.userId} key={member.userId}>
                       {member.name} · {member.role}
                     </option>
                   ))}
@@ -493,25 +619,57 @@ export function OpportunityGovernance({
                 </label>
               )}
             </div>
-            <button className="button button-primary" disabled={busy}>
-              Criar estimativa
+            <button className="button button-primary" disabled={busy || !beneficiaries.length}>
+              {busy
+                ? "Salvando…"
+                : editingCommissionId
+                  ? "Salvar comissão"
+                  : "Criar estimativa"}
             </button>
           </form>
         )}
         <div className="financial-item-list">
           {commissions.map((item) => (
             <article key={item.id}>
-              <span className="financial-kind commission">{item.type}</span>
+              <span className="financial-kind commission">{commissionTypeLabel(item.type)}</span>
               <div>
                 <b>{item.userName}</b>
                 <small>
                   {item.method === "PERCENTAGE"
                     ? `${Number(item.percentage || 0) / 100}% sobre ${money(item.baseAmount)}`
                     : "Valor fixo"}{" "}
-                  · {item.status}
+                  · {commissionStatusLabel(item.status)}
                 </small>
               </div>
               <strong>{money(item.amount)}</strong>
+              {canManageCommission && item.status === "ESTIMATED" && (
+                <div className="financial-row-actions">
+                  <button
+                    type="button"
+                    aria-label={`Editar comissão de ${item.userName}`}
+                    disabled={busy}
+                    onClick={() => {
+                      setEditingCommissionId(item.id);
+                      setCommission({
+                        userId: item.userId,
+                        type: item.type,
+                        method: item.method,
+                        percentage:
+                          item.percentage === null
+                            ? ""
+                            : String(item.percentage / 100),
+                        amount:
+                          item.method === "FIXED"
+                            ? String(item.amount / 100)
+                            : "",
+                      });
+                      setCommissionOpen(true);
+                    }}
+                  >
+                    <Pencil />
+                  </button>
+                </div>
+              )}
             </article>
           ))}
           {!commissions.length && (
@@ -541,7 +699,7 @@ function ApprovalCard({
         {icon}
         <div>
           <small>{title}</small>
-          <b>{status.replaceAll("_", " ")}</b>
+          <b>{approvalStatusLabel(status)}</b>
         </div>
       </header>
       {detail && (
@@ -576,7 +734,12 @@ function ApprovalActions({
       kind === "COMMERCIAL"
         ? canReviewCommercial
         : ["OWNER", "FINANCE"].includes(role),
-    requester = ["OWNER", "MANAGER", "SALES", "BOOKING_AGENT"].includes(role);
+    requester =
+      kind === "FINANCIAL"
+        ? ["OWNER", "MANAGER", "SALES", "BOOKING_AGENT", "FINANCE"].includes(
+            role,
+          )
+        : ["OWNER", "MANAGER", "SALES", "BOOKING_AGENT"].includes(role);
   if (pending && reviewer)
     return (
       <>
@@ -620,5 +783,23 @@ function Metric({
       <small>{label}</small>
       <b>{value}</b>
     </article>
+  );
+}
+
+function SectionError({
+  message,
+  retry,
+}: {
+  message: string;
+  retry: () => Promise<void>;
+}) {
+  return (
+    <div className="finance-section-error" role="alert">
+      <span>{message}</span>
+      <button type="button" onClick={() => void retry()}>
+        <RefreshCw />
+        Tentar novamente
+      </button>
+    </div>
   );
 }

@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
 import { requireActiveMembership } from "@/app/lib/active-membership";
+import { ensureOpportunityCommercialValidator } from "@/app/lib/artist-sales";
+import { canApproveOpportunityFinance } from "@/app/lib/opportunity-finance-rules";
 import { canAccessArtist } from "@/app/lib/member-access";
 import {
   canAccessOpportunity,
@@ -115,6 +117,13 @@ export async function POST(
       { error: "Oportunidade não encontrada." },
       { status: 404 },
     );
+  opportunity.commercialValidatorUserId =
+    await ensureOpportunityCommercialValidator(
+      contextResult.organizationId,
+      opportunity.id,
+      opportunity.artistId,
+      opportunity.commercialValidatorUserId,
+    );
   const body = (await request.json().catch(() => ({}))) as Record<
       string,
       unknown
@@ -150,7 +159,7 @@ export async function POST(
       );
     if (
       kind === "FINANCIAL" &&
-      !["OWNER", "MANAGER", "SALES", "BOOKING_AGENT"].includes(
+      !["OWNER", "MANAGER", "SALES", "BOOKING_AGENT", "FINANCE"].includes(
         contextResult.membership.role,
       )
     )
@@ -232,7 +241,7 @@ export async function POST(
       ? ["OWNER", "MANAGER"].includes(contextResult.membership.role) ||
         (contextResult.membership.role === "SALES" &&
           opportunity.commercialValidatorUserId === contextResult.user.id)
-      : ["OWNER", "FINANCE"].includes(contextResult.membership.role);
+      : canApproveOpportunityFinance(contextResult.membership.role);
   if (!allowed)
     return Response.json(
       { error: "Sem permissão para analisar esta aprovação." },

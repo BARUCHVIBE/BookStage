@@ -2,12 +2,12 @@ import { env } from "cloudflare:workers";
 import { pbkdf2 } from "node:crypto";
 import { cookies } from "next/headers";
 import { ensureDatabase } from "@/db/bootstrap";
+import { normalizeLoginEmail } from "./password-policy";
 
 const SESSION_COOKIE = "bookstage_session";
 const SESSION_DAYS = 7;
 const PASSWORD_ITERATIONS = 100_000;
 const DEFAULT_EMAIL = "admin@bookstage.local";
-const DEFAULT_PASSWORD = "BookStage@2026";
 const DEFAULT_USER_ID = "user-a";
 
 const encoder = new TextEncoder();
@@ -70,10 +70,10 @@ async function ensureLocalAdmin() {
   )
     return;
   const email =
-    process.env.BOOKSTAGE_LOCAL_ADMIN_EMAIL?.trim().toLowerCase() ||
+    normalizeLoginEmail(process.env.BOOKSTAGE_LOCAL_ADMIN_EMAIL || "") ||
     DEFAULT_EMAIL;
-  const password =
-    process.env.BOOKSTAGE_LOCAL_ADMIN_PASSWORD || DEFAULT_PASSWORD;
+  const password = process.env.BOOKSTAGE_LOCAL_ADMIN_PASSWORD;
+  if (!password) return;
   const existing = await env.DB.prepare(
     `SELECT user_id FROM auth_credentials WHERE user_id=?`,
   )
@@ -91,6 +91,8 @@ async function ensureLocalAdmin() {
       ).bind(DEFAULT_USER_ID, hash, salt),
     ]);
   }
+  const teamPassword = process.env.BOOKSTAGE_LOCAL_TEAM_PASSWORD;
+  if (!teamPassword) return;
   const productionUserId = "production-luiza",
     productionExisting = await env.DB.prepare(
       `SELECT user_id FROM auth_credentials WHERE user_id=?`,
@@ -99,7 +101,7 @@ async function ensureLocalAdmin() {
       .first();
   if (!productionExisting) {
     const salt = randomHex(16),
-      hash = await passwordHash(DEFAULT_PASSWORD, salt);
+      hash = await passwordHash(teamPassword, salt);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO users (id,email,name) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name,updated_at=CURRENT_TIMESTAMP`,
@@ -117,7 +119,7 @@ async function ensureLocalAdmin() {
       .first();
   if (!financeExisting) {
     const salt = randomHex(16),
-      hash = await passwordHash(DEFAULT_PASSWORD, salt);
+      hash = await passwordHash(teamPassword, salt);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO users (id,email,name) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name,updated_at=CURRENT_TIMESTAMP`,
@@ -135,7 +137,7 @@ async function ensureLocalAdmin() {
       .first();
   if (!salesExisting) {
     const salt = randomHex(16),
-      hash = await passwordHash(DEFAULT_PASSWORD, salt);
+      hash = await passwordHash(teamPassword, salt);
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO users (id,email,name) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name,updated_at=CURRENT_TIMESTAMP`,
@@ -177,9 +179,9 @@ export async function authenticate(email: string, password: string) {
   await ensureDatabase();
   await ensureLocalAdmin();
   const row = await env.DB.prepare(
-    `SELECT u.id,u.email,u.name,c.password_hash AS passwordHash,c.password_salt AS passwordSalt FROM users u JOIN auth_credentials c ON c.user_id=u.id WHERE lower(u.email)=lower(?)`,
+    `SELECT u.id,u.email,u.name,c.password_hash AS passwordHash,c.password_salt AS passwordSalt FROM users u JOIN auth_credentials c ON c.user_id=u.id WHERE lower(u.email)=? AND EXISTS (SELECT 1 FROM memberships membership JOIN organizations organization ON organization.id=membership.organization_id WHERE membership.user_id=u.id AND membership.status='ACTIVE' AND organization.status='ACTIVE')`,
   )
-    .bind(email.trim())
+    .bind(normalizeLoginEmail(email))
     .first<{
       id: string;
       email: string;
@@ -195,6 +197,33 @@ export async function authenticate(email: string, password: string) {
   return timingSafeEqual(candidate, row.passwordHash)
     ? { id: row.id, email: row.email, name: row.name ?? row.email }
     : null;
+}
+
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  nextPassword: string,
+) {
+  await ensureDatabase();
+  const credential = await env.DB.prepare(
+    `SELECT password_hash AS passwordHash,password_salt AS passwordSalt FROM auth_credentials WHERE user_id=?`,
+  )
+    .bind(userId)
+    .first<{ passwordHash: string; passwordSalt: string }>();
+  if (!credential) return false;
+  const currentHash = await passwordHash(
+    currentPassword,
+    credential.passwordSalt,
+  );
+  if (!timingSafeEqual(currentHash, credential.passwordHash)) return false;
+  const next = await createPasswordCredential(nextPassword);
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE auth_credentials SET password_hash=?,password_salt=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?`,
+    ).bind(next.hash, next.salt, userId),
+    env.DB.prepare(`DELETE FROM sessions WHERE user_id=?`).bind(userId),
+  ]);
+  return true;
 }
 
 export async function createSession(userId: string) {
@@ -221,12 +250,18 @@ export async function createSession(userId: string) {
       ),
     );
   await env.DB.batch(statements);
+  await env.DB.prepare(
+    `DELETE FROM sessions WHERE user_id=? AND token_hash<>? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE user_id=? AND token_hash<>? ORDER BY created_at DESC LIMIT 9)`,
+  )
+    .bind(userId, tokenHash, userId, tokenHash)
+    .run();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "strict",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: new Date(expiresAt),
+    priority: "high",
   });
 }
 
@@ -236,10 +271,16 @@ export async function sessionUser() {
   if (!token) return null;
   const tokenHash = await sha256(token);
   const row = await env.DB.prepare(
-    `SELECT u.id,u.email,u.name FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`,
+    `SELECT u.id,u.email,u.name FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND EXISTS (SELECT 1 FROM memberships membership JOIN organizations organization ON organization.id=membership.organization_id WHERE membership.user_id=u.id AND membership.status='ACTIVE' AND organization.status='ACTIVE')`,
   )
     .bind(tokenHash, new Date().toISOString())
     .first<{ id: string; email: string; name: string | null }>();
+  if (!row) {
+    await env.DB.prepare(`DELETE FROM sessions WHERE token_hash=?`)
+      .bind(tokenHash)
+      .run();
+    (await cookies()).delete(SESSION_COOKIE);
+  }
   return row
     ? { id: row.id, email: row.email, name: row.name ?? row.email }
     : null;

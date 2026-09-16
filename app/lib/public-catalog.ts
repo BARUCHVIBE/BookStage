@@ -5,6 +5,7 @@ import type {
   PublicOrganization,
 } from "./public-catalog-dto";
 import { resolveOrganizationBranding } from "./organization-branding";
+import { publicImageUrl } from "./public-image-url";
 
 export { publicArtistDto, publicCatalogDto } from "./public-catalog-dto";
 
@@ -44,7 +45,7 @@ export async function getPublicOrganization(slug: string) {
   return row
     ? {
         ...row,
-        logo: safeUrl(row.logo),
+        logo: publicImageUrl(row.logo),
         instagram: safeUrl(row.instagram),
         website: safeUrl(row.website),
       }
@@ -68,8 +69,8 @@ export async function getPublicArtists(organizationSlug: string) {
     .all<PublicArtistCard>();
   return rows.results.map((artist) => ({
     ...artist,
-    photoUrl: safeUrl(artist.photoUrl),
-    coverUrl: safeUrl(artist.coverUrl),
+    photoUrl: publicImageUrl(artist.photoUrl),
+    coverUrl: publicImageUrl(artist.coverUrl),
   }));
 }
 
@@ -92,8 +93,8 @@ export async function getPublicArtist(
   const { showFormats, videoUrls, publicMaterials, ...artist } = row;
   return {
     ...artist,
-    photoUrl: safeUrl(row.photoUrl),
-    coverUrl: safeUrl(row.coverUrl),
+    photoUrl: publicImageUrl(row.photoUrl),
+    coverUrl: publicImageUrl(row.coverUrl),
     instagram: safeUrl(row.instagram),
     spotify: safeUrl(row.spotify),
     youtube: safeUrl(row.youtube),
@@ -108,7 +109,7 @@ export async function getPublicAvailability(
   artistSlug: string,
 ) {
   const rows = await env.DB.prepare(
-    `SELECT substr(entry.start_datetime,1,10) AS date,MAX(CASE WHEN entry.status IN ('CONFIRMED','BLOCKED') THEN 3 WHEN entry.status IN ('INQUIRY','OPTION') THEN 2 ELSE 1 END) AS level FROM calendar_entries entry JOIN artists artist ON artist.id=entry.artist_id AND artist.organization_id=entry.organization_id JOIN organizations organization ON organization.id=entry.organization_id WHERE organization.slug=? AND artist.slug=? AND organization.status='ACTIVE' AND artist.status='ACTIVE' AND artist.is_public=1 AND entry.start_datetime>=CURRENT_TIMESTAMP AND entry.start_datetime<datetime(CURRENT_TIMESTAMP,'+120 days') GROUP BY substr(entry.start_datetime,1,10) ORDER BY date LIMIT 24`,
+    `SELECT date(entry.start_datetime,'-3 hours') AS date,MAX(CASE WHEN entry.status IN ('CONFIRMED','BLOCKED') THEN 3 WHEN entry.status IN ('INQUIRY','OPTION') THEN 2 ELSE 1 END) AS level FROM calendar_entries entry JOIN artists artist ON artist.id=entry.artist_id AND artist.organization_id=entry.organization_id JOIN organizations organization ON organization.id=entry.organization_id WHERE organization.slug=? AND artist.slug=? AND organization.status='ACTIVE' AND artist.status='ACTIVE' AND artist.is_public=1 AND entry.start_datetime>=CURRENT_TIMESTAMP AND entry.start_datetime<datetime(CURRENT_TIMESTAMP,'+120 days') GROUP BY date(entry.start_datetime,'-3 hours') ORDER BY date LIMIT 24`,
   )
     .bind(organizationSlug, artistSlug)
     .all<{ date: string; level: number }>();

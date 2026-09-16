@@ -8,14 +8,13 @@ import {
   normalizeAppearancePreference,
 } from "../app/lib/appearance";
 
-test("preferência de aparência aceita claro, escuro e sistema", () => {
+test("preferência de aparência aceita somente claro e escuro", () => {
   assert.equal(normalizeAppearancePreference("light"), "light");
   assert.equal(normalizeAppearancePreference("dark"), "dark");
-  assert.equal(normalizeAppearancePreference("system"), "system");
-  assert.equal(normalizeAppearancePreference("invalid"), "system");
+  assert.equal(normalizeAppearancePreference("system"), "light");
+  assert.equal(normalizeAppearancePreference("invalid"), "light");
   assert.equal(nextAppearancePreference("light"), "dark");
-  assert.equal(nextAppearancePreference("dark"), "system");
-  assert.equal(nextAppearancePreference("system"), "light");
+  assert.equal(nextAppearancePreference("dark"), "light");
 });
 
 test("preferência é isolada por usuário", () => {
@@ -29,8 +28,8 @@ test("preferência é isolada por usuário", () => {
 test("bootstrap aplica a preferência antes da hidratação", () => {
   const script = appearanceBootScript("user-a");
   assert.match(script, /bookstage:appearance:user-a/);
-  assert.match(script, /prefers-color-scheme: dark/);
   assert.match(script, /dataset\.adminTheme/);
+  assert.doesNotMatch(script, /system|prefers-color-scheme|matchMedia/);
   assert.doesNotMatch(script, /<\/script/i);
 });
 
@@ -42,7 +41,7 @@ test("layout reconhece os atributos de tema aplicados antes da hidratação", as
   assert.match(layout, /<html lang="pt-BR" suppressHydrationWarning>/);
 });
 
-test("provider sincroniza sistema, storage e tema resolvido", async () => {
+test("provider sincroniza storage e tema resolvido sem acompanhar o sistema", async () => {
   const source = await readFile(
     new URL(
       "../app/components/organization-theme-provider.tsx",
@@ -50,7 +49,7 @@ test("provider sincroniza sistema, storage e tema resolvido", async () => {
     ),
     "utf8",
   );
-  assert.match(source, /prefers-color-scheme: dark/);
+  assert.doesNotMatch(source, /prefers-color-scheme|matchMedia|systemDark/);
   assert.match(source, /addEventListener\("storage"/);
   assert.match(source, /localStorage\.setItem/);
   assert.match(source, /data-theme=\{resolved\}/);
@@ -87,4 +86,5 @@ test("seletor de aparência fica disponível no shell autenticado", async () => 
   assert.match(shell, /userId=\{user\.id\}/);
   assert.match(selector, /Aparência:/);
   assert.match(selector, /nextAppearancePreference/);
+  assert.doesNotMatch(selector, /Sistema|Laptop/);
 });

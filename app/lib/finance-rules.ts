@@ -37,6 +37,42 @@ export function normalizePaymentInput(body: Record<string, unknown>) {
   return { description, amount, dueDate, notes };
 }
 
+export const receiptMethods = [
+  "PIX",
+  "TRANSFER",
+  "CASH",
+  "CARD",
+  "BOLETO",
+  "OTHER",
+] as const;
+
+export function normalizeReceiptInput(body: Record<string, unknown>) {
+  const amount = Number(body.amount),
+    receivedAt = clean(body.receivedAt, 10),
+    method = clean(body.method, 20).toUpperCase(),
+    notes = clean(body.notes, 2000) || null,
+    idempotencyKey = clean(body.idempotencyKey, 100);
+  if (!Number.isInteger(amount) || amount <= 0 || amount > 999_999_999_99)
+    throw new Error("Valor recebido inválido.");
+  if (!validDate(receivedAt)) throw new Error("Informe a data efetiva do recebimento.");
+  if (!receiptMethods.includes(method as (typeof receiptMethods)[number]))
+    throw new Error("Forma de pagamento inválida.");
+  if (!idempotencyKey) throw new Error("Identificador da operação inválido.");
+  return { amount, receivedAt, method, notes, idempotencyKey };
+}
+
+export function paymentSituation(
+  scheduled: number,
+  received: number,
+  overdueCount: number,
+) {
+  if (!scheduled) return "Sem parcelas definidas";
+  if (received >= scheduled) return "Quitado";
+  if (overdueCount) return received ? "Recebido parcialmente · vencido" : "Vencido";
+  if (received) return "Recebido parcialmente";
+  return "A receber";
+}
+
 export function effectivePaymentStatus(
   status: PaymentStatus,
   dueDate: string,
@@ -97,7 +133,7 @@ export function normalizeCommissionInput(
   body: Record<string, unknown>,
   showFee: number | null,
 ) {
-  const userId = clean(body.userId, 100),
+  const userId = clean(body.beneficiaryUserId ?? body.userId, 100),
     percentageValue = Number(body.percentage),
     fixedAmount = Number(body.amount),
     type = clean(body.type, 20) || "SALES",

@@ -16,6 +16,7 @@ import {
   Users,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 type Member = {
   id: string;
@@ -58,6 +59,7 @@ type Detail = {
   opportunities: { total: number; won: number; soldValue: number };
   commissions: Array<{ status: string; count: number; amount: number }>;
   canManage: boolean;
+  canEditName: boolean;
   canManageLinks: boolean;
 };
 const departments = [
@@ -112,34 +114,30 @@ export function TeamModule({
     artistIds: [] as string[],
   });
   const load = useCallback(async () => {
-    const response = await fetch(
-        `/api/organizations/${organizationId}/members`,
-      ),
-      data = (await response.json()) as {
+    const result = await fetchJson<{
         members?: Member[];
         artists?: Array<{ id: string; name: string }>;
         canManage?: boolean;
         error?: string;
-      };
-    if (response.ok) {
+      }>(`/api/organizations/${organizationId}/members`);
+    if (result.ok) {
+      const data = result.data || {};
       setMembers(data.members || []);
       setArtists(data.artists || []);
       setCanManage(Boolean(data.canManage));
       setMessage("");
-    } else setMessage(data.error || "Não foi possível carregar a equipe.");
+    } else setMessage(result.error || "Não foi possível carregar a equipe.");
   }, [organizationId]);
   useEffect(() => {
     void load();
   }, [load]);
   async function open(userId: string) {
-    const response = await fetch(
-        `/api/organizations/${organizationId}/members/${userId}`,
-      ),
-      data = (await response.json()) as Detail & { error?: string };
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível abrir o perfil.");
+    const result = await fetchJson<Detail & { error?: string }>(`/api/organizations/${organizationId}/members/${userId}`);
+    if (!result.ok || !result.data) {
+      setMessage(result.error || "Não foi possível abrir o perfil.");
       return;
     }
+    const data = result.data;
     setSelected(data);
     setForm({
       name: data.member.name,
@@ -164,22 +162,22 @@ export function TeamModule({
       return;
     }
     setBusy(true);
-    const response = await fetch("/api/referral-links", {
+    const result = await fetchJson<{ url?: string; error?: string }>("/api/referral-links", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           userId: selected.member.id,
           artistId: linkArtistId,
         }),
-      }),
-      data = (await response.json()) as { url?: string; error?: string };
+      });
     setBusy(false);
-    if (!response.ok || !data.url) {
-      setMessage(data.error || "Não foi possível gerar o link.");
+    if (!result.ok || !result.data?.url) {
+      setMessage(result.error || "Não foi possível gerar o link.");
       return;
     }
-    setGeneratedLink(data.url);
-    await navigator.clipboard?.writeText(data.url);
+    const data = result.data;
+    setGeneratedLink(data.url!);
+    await navigator.clipboard?.writeText(data.url!);
     setMessage(
       "Link comercial gerado e copiado. Ele será exibido somente agora.",
     );
@@ -192,14 +190,13 @@ export function TeamModule({
       )
     )
       return;
-    const response = await fetch("/api/referral-links", {
+    const result = await fetchJson<{ error?: string }>("/api/referral-links", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id }),
-      }),
-      data = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível revogar.");
+      });
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível revogar.");
       return;
     }
     if (selected) await open(selected.member.id);
@@ -210,18 +207,17 @@ export function TeamModule({
       return;
     }
     setBusy(true);
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         `/api/organizations/${organizationId}/members/${selected.member.id}`,
         {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(form),
         },
-      ),
-      data = (await response.json()) as { error?: string };
+      );
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível salvar.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível salvar.");
       return;
     }
     setMessage("Perfil atualizado com histórico de auditoria.");
@@ -248,7 +244,11 @@ export function TeamModule({
   async function createAccess() {
     if (busy) return;
     setBusy(true);
-    const response = await fetch(
+    const result = await fetchJson<{
+        id?: string;
+        reusedUser?: boolean;
+        error?: string;
+      }>(
         `/api/organizations/${organizationId}/members`,
         {
           method: "POST",
@@ -259,15 +259,17 @@ export function TeamModule({
               creationKind === "BOOKING" ? "BOOKING_AGENT" : newMember.role,
           }),
         },
-      ),
-      data = (await response.json()) as { id?: string; error?: string };
+      );
     setBusy(false);
-    if (!response.ok || !data.id) {
-      setMessage(data.error || "Não foi possível criar o acesso.");
+    if (!result.ok || !result.data?.id) {
+      setMessage(result.error || "Não foi possível criar o acesso.");
       return;
     }
+    const data = result.data;
     setMessage(
-      "Acesso criado. Entregue o e-mail e a senha inicial ao usuário.",
+      data.reusedUser
+        ? "Acesso adicionado. O usuário continuará usando o login e a senha que já possui."
+        : "Acesso criado. Entregue o e-mail e a senha inicial ao usuário.",
     );
     setCreationKind(null);
     setNewMember({
@@ -279,7 +281,7 @@ export function TeamModule({
       artistIds: [],
     });
     await load();
-    await open(data.id);
+    await open(data.id!);
     onMembersChanged?.();
   }
   async function removeAccess() {
@@ -291,14 +293,13 @@ export function TeamModule({
     )
       return;
     setBusy(true);
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         `/api/organizations/${organizationId}/members/${selected.member.id}`,
         { method: "DELETE" },
-      ),
-      data = (await response.json()) as { error?: string };
+      );
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível remover o acesso.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível remover o acesso.");
       return;
     }
     setSelected(null);
@@ -391,7 +392,7 @@ export function TeamModule({
               <label>
                 Nome
                 <input
-                  disabled={!canManage}
+                  disabled={!selected.canEditName}
                   value={form.name}
                   onChange={(event) =>
                     setForm((current) => ({
@@ -692,7 +693,7 @@ export function TeamModule({
               type="password"
               value={newMember.password}
               autoComplete="new-password"
-              placeholder="Mínimo de 12 caracteres"
+              placeholder="Obrigatória somente para usuário novo"
               onChange={(event) =>
                 setNewMember((current) => ({
                   ...current,
@@ -701,8 +702,9 @@ export function TeamModule({
               }
             />
             <small>
-              Use letra maiúscula, minúscula e número. A senha não será exibida
-              novamente.
+              Se o e-mail já possuir login no BookBusiness, deixe em branco: a
+              senha atual será preservada. Para um novo usuário, use no mínimo
+              12 caracteres, letra maiúscula, minúscula e número.
             </small>
           </label>
           {creationKind === "MEMBER" && (

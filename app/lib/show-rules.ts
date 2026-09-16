@@ -13,13 +13,18 @@ export function canViewShow(
   assignedUserId: string | null,
   currentUserId: string,
   originatorUserId: string | null = null,
+  commercialValidatorUserId: string | null = null,
 ) {
   return (
     role === "OWNER" ||
     role === "MANAGER" ||
     role === "PRODUCTION" ||
     role === "FINANCE" ||
-    (["SALES", "BOOKING_AGENT"].includes(role) &&
+    (role === "SALES" &&
+      (assignedUserId === currentUserId ||
+        originatorUserId === currentUserId ||
+        commercialValidatorUserId === currentUserId)) ||
+    (role === "BOOKING_AGENT" &&
       (assignedUserId === currentUserId || originatorUserId === currentUserId))
   );
 }
@@ -31,12 +36,17 @@ export function canViewShowCommercial(
   assignedUserId: string | null,
   currentUserId: string,
   originatorUserId: string | null = null,
+  commercialValidatorUserId: string | null = null,
 ) {
   return (
     role === "OWNER" ||
     role === "MANAGER" ||
     role === "FINANCE" ||
-    (["SALES", "BOOKING_AGENT"].includes(role) &&
+    (role === "SALES" &&
+      (assignedUserId === currentUserId ||
+        originatorUserId === currentUserId ||
+        commercialValidatorUserId === currentUserId)) ||
+    (role === "BOOKING_AGENT" &&
       (assignedUserId === currentUserId || originatorUserId === currentUserId))
   );
 }

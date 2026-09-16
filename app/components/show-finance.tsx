@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 
 type PaymentStatus = "PENDING" | "PAID" | "OVERDUE" | "CANCELLED";
 type CommissionStatus =
@@ -32,6 +33,7 @@ type FinanceData = {
     paidAt: string | null;
     status: PaymentStatus;
     notes: string | null;
+    receivedAmount: number;
   }>;
   commissions: Array<{
     id: string;
@@ -65,9 +67,7 @@ const money = (value: number) =>
 const date = (value: string | null) =>
   value ? new Date(`${value}T12:00:00`).toLocaleDateString("pt-BR") : "—";
 async function requestFinance(showId: string) {
-  const response = await fetch(`/api/shows/${showId}/finance`),
-    data = (await response.json()) as FinanceData & { error?: string };
-  return { response, data };
+  return fetchJson<FinanceData & { error?: string }>(`/api/shows/${showId}/finance`);
 }
 
 export function ShowFinance({ showId }: { showId: string }) {
@@ -84,16 +84,16 @@ export function ShowFinance({ showId }: { showId: string }) {
     }),
     [commission, setCommission] = useState({ userId: "", percentage: "" });
   const load = useCallback(async () => {
-    const { response, data } = await requestFinance(showId);
-    if (response.ok) setData(data);
-    else setMessage(data.error || "Não foi possível carregar o financeiro.");
+    const result = await requestFinance(showId);
+    if (result.ok && result.data) setData(result.data);
+    else setMessage(result.error || "Não foi possível carregar o financeiro.");
   }, [showId]);
   useEffect(() => {
     let mounted = true;
-    requestFinance(showId).then(({ response, data }) => {
+    requestFinance(showId).then((result) => {
       if (!mounted) return;
-      if (response.ok) setData(data);
-      else setMessage(data.error || "Não foi possível carregar o financeiro.");
+      if (result.ok && result.data) setData(result.data);
+      else setMessage(result.error || "Não foi possível carregar o financeiro.");
     });
     return () => {
       mounted = false;
@@ -102,14 +102,13 @@ export function ShowFinance({ showId }: { showId: string }) {
   async function post(body: Record<string, unknown>) {
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/shows/${showId}/finance`, {
+    const result = await fetchJson<{ error?: string }>(`/api/shows/${showId}/finance`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      result = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
+    if (!result.ok) {
       setMessage(result.error || "Não foi possível salvar.");
       return false;
     }
@@ -119,18 +118,28 @@ export function ShowFinance({ showId }: { showId: string }) {
   async function patch(body: Record<string, unknown>) {
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/shows/${showId}/finance`, {
+    const result = await fetchJson<{ error?: string }>(`/api/shows/${showId}/finance`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      result = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
+    if (!result.ok) {
       setMessage(result.error || "Não foi possível atualizar.");
       return;
     }
     await load();
+  }
+  async function receive(paymentId: string, balance: number) {
+    const amountText = window.prompt("Valor recebido (R$):", (balance / 100).toFixed(2).replace(".", ","));
+    if (amountText === null) return;
+    const receivedAt = window.prompt("Data efetiva do recebimento (AAAA-MM-DD):", new Date().toISOString().slice(0, 10));
+    if (receivedAt === null) return;
+    const method = window.prompt("Forma de pagamento: PIX, TRANSFER, CASH, CARD, BOLETO ou OTHER", "PIX");
+    if (method === null) return;
+    const notes = window.prompt("Observação (opcional):");
+    if (notes === null) return;
+    await patch({ entity: "payment", id: paymentId, status: "PAID", amount: Math.round(Number(amountText.replace(",", ".")) * 100), receivedAt, method: method.toUpperCase(), notes, idempotencyKey: crypto.randomUUID() });
   }
   async function createPayment(event: React.FormEvent) {
     event.preventDefault();
@@ -397,13 +406,7 @@ export function ShowFinance({ showId }: { showId: string }) {
                   <div className="finance-row-actions">
                     <button
                       disabled={busy}
-                      onClick={() =>
-                        patch({
-                          entity: "payment",
-                          id: item.id,
-                          status: "PAID",
-                        })
-                      }
+                      onClick={() => receive(item.id, item.amount - Number(item.receivedAmount || 0))}
                     >
                       Marcar recebido
                     </button>

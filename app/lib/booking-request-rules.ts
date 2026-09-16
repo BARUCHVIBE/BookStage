@@ -11,6 +11,7 @@ export type PublicBookingInput = {
   estimatedAudience: number | null;
   budget: string | null;
   notes: string | null;
+  document: string | null;
   submittedAt: number;
   website: string;
 };
@@ -35,6 +36,7 @@ export function validatePublicBooking(
     eventType = clean(body.eventType, 100),
     budget = clean(body.budget, 80) || null,
     notes = clean(body.notes, 2000) || null,
+    document = clean(body.document, 30) || null,
     website = clean(body.website, 200),
     submittedAt = Number(body.submittedAt),
     audienceText = clean(body.estimatedAudience, 12),
@@ -89,6 +91,7 @@ export function validatePublicBooking(
     estimatedAudience,
     budget,
     notes,
+    document,
     submittedAt,
     website,
   };

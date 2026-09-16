@@ -5,6 +5,7 @@ import { useState } from "react";
 import {
   BRANDING_FONT_STACKS,
   readableForeground,
+  resolveAdminBrandingTheme,
   type OrganizationBranding,
 } from "@/app/lib/organization-branding";
 
@@ -21,15 +22,34 @@ export function BrandPreview({
   const valid = (color: string, fallback: string) =>
       /^#[0-9a-f]{6}$/i.test(color) ? color : fallback,
     primary = valid(branding.primaryColor, "#111827"),
+    secondary = valid(branding.secondaryColor, "#374151"),
     accent = valid(branding.accentColor, "#E2B002"),
     background = valid(branding.backgroundColor, "#F8F8F8"),
+    tokens = resolveAdminBrandingTheme(
+      { primaryColor: primary, secondaryColor: secondary, backgroundColor: background },
+      previewTheme,
+    ),
     style = {
       "--preview-primary": primary,
-      "--preview-primary-foreground": readableForeground(primary),
+      "--preview-primary-foreground": tokens.sidebarForeground,
+      "--preview-primary-hover": tokens.primaryButtonHoverBackground,
+      "--preview-primary-hover-foreground": tokens.primaryButtonHoverForeground,
+      "--preview-secondary": secondary,
+      "--preview-secondary-foreground": tokens.sidebarActiveForeground,
+      "--preview-sidebar-hover": tokens.sidebarHoverBackground,
+      "--preview-sidebar-hover-foreground": tokens.sidebarHoverForeground,
+      "--preview-sidebar-active-hover": tokens.sidebarActiveHoverBackground,
+      "--preview-sidebar-active-hover-foreground": tokens.sidebarActiveHoverForeground,
       "--preview-accent": accent,
       "--preview-accent-foreground": readableForeground(accent),
       "--preview-brand-background": background,
-      "--preview-brand-background-foreground": readableForeground(background),
+      "--preview-page": tokens.pageBackground,
+      "--preview-page-foreground": tokens.pageForeground,
+      "--preview-card": tokens.cardBackground,
+      "--preview-card-foreground": tokens.cardForeground,
+      "--preview-muted-foreground": tokens.mutedForeground,
+      "--preview-border": tokens.border,
+      "--preview-logo-plate": tokens.logoPlate,
       "--preview-heading-font": BRANDING_FONT_STACKS[branding.headingFont],
       "--preview-body-font": BRANDING_FONT_STACKS[branding.bodyFont],
     } as CSSProperties;
@@ -63,7 +83,7 @@ export function BrandPreview({
             <b>{companyName}</b>
           </div>
           <nav>
-            <span className="is-active">Dashboard</span>
+            <span className="is-active">Visão geral</span>
             <span>Artistas</span>
             <span>Agenda</span>
           </nav>

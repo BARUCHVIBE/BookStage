@@ -5,5 +5,8 @@ export async function POST(request: Request) {
   const rejected = rejectCrossOriginMutation(request);
   if (rejected) return rejected;
   await destroySession();
-  return Response.json({ ok: true });
+  return Response.json(
+    { ok: true },
+    { headers: { "cache-control": "no-store" } },
+  );
 }

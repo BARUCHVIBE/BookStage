@@ -6,6 +6,7 @@ import {
   type AssignmentInput,
 } from "@/app/lib/artist-access";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
+import { getArtistPrimaryCommercial } from "@/app/lib/artist-sales";
 
 export async function PUT(
   request: Request,
@@ -22,10 +23,10 @@ export async function PUT(
     );
   const { id } = await routeContext.params;
   const artist = await env.DB.prepare(
-    `SELECT id FROM artists WHERE id=? AND organization_id=?`,
+    `SELECT id,status FROM artists WHERE id=? AND organization_id=?`,
   )
     .bind(id, context.organizationId)
-    .first();
+    .first<{ id: string; status: string }>();
   if (!artist)
     return Response.json({ error: "Artista não encontrado." }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as {
@@ -53,6 +54,14 @@ export async function PUT(
       { status: 400 },
     );
   }
+  if (artist.status === "ACTIVE" && !assignments.primaryUserId)
+    return Response.json(
+      {
+        error:
+          "Todo artista ativo precisa de um responsável comercial principal.",
+      },
+      { status: 400 },
+    );
   const statements = [
     env.DB.prepare(
       `DELETE FROM artist_sales_assignments WHERE artist_id=? AND organization_id=?`,
@@ -71,5 +80,11 @@ export async function PUT(
       ).bind(context.organizationId, id, userId),
     );
   await env.DB.batch(statements);
-  return Response.json({ ok: true });
+  return Response.json({
+    ok: true,
+    primaryCommercial: await getArtistPrimaryCommercial(
+      context.organizationId,
+      id,
+    ),
+  });
 }

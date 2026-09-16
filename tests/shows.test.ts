@@ -46,6 +46,8 @@ test("produção acessa a operação sem receber o contexto comercial", () => {
   assert.equal(canViewShowCommercial("PRODUCTION", null, "production"), false);
   assert.equal(canViewShow("SALES", "sales-a", "sales-a"), true);
   assert.equal(canViewShow("SALES", "sales-b", "sales-a"), false);
+  assert.equal(canViewShow("SALES", "sales-b", "sales-a", null, "sales-a"), true);
+  assert.equal(canViewShow("BOOKING_AGENT", "sales-b", "sales-a", null, "sales-a"), false);
   assert.equal(canEditProduction("SALES"), false);
 });
 
@@ -64,6 +66,20 @@ test("rider e mapa de palco aceitam apenas documentos seguros", () => {
         new File(["texto"], "rider.txt", { type: "text/plain" }),
       ),
     /PDF, PNG ou JPG/,
+  );
+  validateShowDocument(
+    new File([new Uint8Array(10 * 1024 * 1024)], "limite.pdf", {
+      type: "application/pdf",
+    }),
+  );
+  assert.throws(
+    () =>
+      validateShowDocument(
+        new File([new Uint8Array(10 * 1024 * 1024 + 1)], "excesso.pdf", {
+          type: "application/pdf",
+        }),
+      ),
+    /10 MB/,
   );
   assert.equal(
     safeShowFileName('rider/turnê\n"2026".pdf'),

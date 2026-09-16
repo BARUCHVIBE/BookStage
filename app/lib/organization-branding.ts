@@ -27,7 +27,7 @@ export const DEFAULT_BOOKSTAGE_THEME: OrganizationBranding = {
   backgroundColor: "#F8F8F8",
   primaryForeground: "#FFFFFF",
   secondaryForeground: "#FFFFFF",
-  accentForeground: "#111827",
+  accentForeground: "#000000",
   headingFont: "Inter",
   bodyFont: "Inter",
   catalogCoverUrl: null,
@@ -117,10 +117,167 @@ export function contrastRatio(first: string, second: string) {
 }
 
 export function readableForeground(background: string) {
-  return contrastRatio(background, "#FFFFFF") >=
-    contrastRatio(background, "#111827")
-    ? "#FFFFFF"
-    : "#111827";
+  const candidates = ["#FFFFFF", "#111827", "#000000"] as const;
+  return candidates.reduce((best, candidate) =>
+    contrastRatio(background, candidate) > contrastRatio(background, best)
+      ? candidate
+      : best,
+  );
+}
+
+export type AdminBrandingThemeMode = "light" | "dark";
+
+export type AdminBrandingTheme = {
+  pageBackground: string;
+  pageForeground: string;
+  cardBackground: string;
+  cardForeground: string;
+  mutedForeground: string;
+  border: string;
+  logoPlate: string;
+  sidebarBackground: string;
+  sidebarForeground: string;
+  sidebarMutedForeground: string;
+  sidebarBorder: string;
+  sidebarHoverBackground: string;
+  sidebarHoverForeground: string;
+  sidebarActiveBackground: string;
+  sidebarActiveForeground: string;
+  sidebarActiveHoverBackground: string;
+  sidebarActiveHoverForeground: string;
+  primaryButtonBackground: string;
+  primaryButtonForeground: string;
+  primaryButtonHoverBackground: string;
+  primaryButtonHoverForeground: string;
+  secondaryButtonBackground: string;
+  secondaryButtonForeground: string;
+  secondaryButtonBorder: string;
+  secondaryButtonHoverBackground: string;
+  secondaryButtonHoverForeground: string;
+};
+
+export function resolveAdminBrandingTheme(
+  branding: Pick<
+    OrganizationBranding,
+    "primaryColor" | "secondaryColor" | "backgroundColor"
+  >,
+  mode: AdminBrandingThemeMode,
+): AdminBrandingTheme {
+  const dark = mode === "dark",
+    base = dark
+      ? {
+          background: "#0B0F16",
+          foreground: "#F4F7FB",
+          card: "#121722",
+          mutedForeground: "#AAB4C3",
+          border: "#2B3546",
+          surfaceHover: "#1B2331",
+          logoPlate: "#EEF1F5",
+        }
+      : {
+          background: "#F8F8F8",
+          foreground: "#111827",
+          card: "#FFFFFF",
+          mutedForeground: "#6B7280",
+          border: "#E5E7EB",
+          surfaceHover: "#F9FAFB",
+          logoPlate: "#F8FAFC",
+        },
+    primary = normalizeHexColor(branding.primaryColor),
+    secondary = normalizeHexColor(branding.secondaryColor),
+    brandBackground = normalizeHexColor(branding.backgroundColor),
+    sidebarForeground = readableForeground(primary),
+    sidebarHoverBackground = mixHexColor(
+      primary,
+      sidebarForeground,
+      0.11,
+    ),
+    sidebarActiveForeground = readableForeground(secondary),
+    sidebarActiveHoverBackground = interactiveHoverColor(secondary),
+    primaryButtonHoverBackground = interactiveHoverColor(primary),
+    secondaryButtonBackground = mixHexColor(
+      base.card,
+      secondary,
+      dark ? 0.18 : 0.12,
+    ),
+    secondaryButtonHoverBackground = mixHexColor(
+      base.surfaceHover,
+      secondary,
+      0.18,
+    );
+
+  return {
+    pageBackground: mixHexColor(
+      base.background,
+      brandBackground,
+      dark ? 0.12 : 0.2,
+    ),
+    pageForeground: base.foreground,
+    cardBackground: base.card,
+    cardForeground: base.foreground,
+    mutedForeground: base.mutedForeground,
+    border: base.border,
+    logoPlate: base.logoPlate,
+    sidebarBackground: primary,
+    sidebarForeground,
+    sidebarMutedForeground: mixHexColor(primary, sidebarForeground, 0.7),
+    sidebarBorder: mixHexColor(primary, sidebarForeground, 0.24),
+    sidebarHoverBackground,
+    sidebarHoverForeground: readableForeground(sidebarHoverBackground),
+    sidebarActiveBackground: secondary,
+    sidebarActiveForeground,
+    sidebarActiveHoverBackground,
+    sidebarActiveHoverForeground: readableForeground(
+      sidebarActiveHoverBackground,
+    ),
+    primaryButtonBackground: primary,
+    primaryButtonForeground: readableForeground(primary),
+    primaryButtonHoverBackground,
+    primaryButtonHoverForeground: readableForeground(
+      primaryButtonHoverBackground,
+    ),
+    secondaryButtonBackground,
+    secondaryButtonForeground: readableForeground(secondaryButtonBackground),
+    secondaryButtonBorder: mixHexColor(
+      base.border,
+      secondary,
+      dark ? 0.35 : 0.28,
+    ),
+    secondaryButtonHoverBackground,
+    secondaryButtonHoverForeground: readableForeground(
+      secondaryButtonHoverBackground,
+    ),
+  };
+}
+
+function formattedRatio(value: number) {
+  return value.toFixed(2).replace(".", ",");
+}
+
+export function organizationBrandingContrastWarnings(
+  branding: Pick<
+    OrganizationBranding,
+    "primaryColor" | "secondaryColor" | "accentColor" | "backgroundColor"
+  >,
+) {
+  const colors = [
+    branding.primaryColor,
+    branding.secondaryColor,
+    branding.accentColor,
+    branding.backgroundColor,
+  ];
+  if (colors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))) return [];
+
+  const warnings: string[] = [],
+    publicAccentRatio = contrastRatio(
+      branding.accentColor,
+      branding.backgroundColor,
+    );
+  if (publicAccentRatio < 3)
+    warnings.push(
+      `No catálogo público, o botão “Solicitar show” possui ${formattedRatio(publicAccentRatio)}:1 de separação visual em relação ao fundo; o recomendado para componentes é 3:1. O texto do botão será ajustado automaticamente, mas a borda do componente ainda pode ficar pouco visível.`,
+    );
+  return warnings;
 }
 
 export function mixHexColor(first: string, second: string, weight: number) {
@@ -144,7 +301,7 @@ export function interactiveHoverColor(background: string) {
   const foreground = readableForeground(background);
   return mixHexColor(
     background,
-    foreground === "#FFFFFF" ? "#FFFFFF" : "#111827",
+    foreground,
     foreground === "#FFFFFF" ? 0.12 : 0.1,
   );
 }

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireActiveMembership } from "@/app/lib/active-membership";
 import { accessibleContract } from "@/app/lib/contract-access";
 import {
+  canManageContract,
   normalizeContractNotes,
   validateContractTransition,
   type ContractStatus,
@@ -84,6 +85,7 @@ export async function GET(
         })
       : null,
     canEditFields =
+      canManageContract(context.membership.role) &&
       access.status === "DRAFT" &&
       !(
         context.membership.role === "BOOKING_AGENT" &&
@@ -126,6 +128,11 @@ export async function PATCH(
     return Response.json(
       { error: "Contrato não encontrado." },
       { status: 404 },
+    );
+  if (!canManageContract(context.membership.role))
+    return Response.json(
+      { error: "Seu perfil possui acesso somente para consulta aos contratos." },
+      { status: 403 },
     );
   const body = (await request.json().catch(() => ({}))) as Record<
     string,

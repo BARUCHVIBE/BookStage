@@ -6,10 +6,13 @@ import {
 } from "@/app/lib/calendar-access";
 import { canAccessOpportunity } from "@/app/lib/opportunity-rules";
 import {
+  canConfirmOpportunityDate,
+  canMutateOpportunityCalendar,
   defaultOpportunityInterval,
   isOpportunityCalendarAction,
   normalizeOpportunityInterval,
 } from "@/app/lib/opportunity-calendar";
+import { operationalDate } from "@/app/lib/operational-time";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
 import { canAccessArtist } from "@/app/lib/member-access";
 
@@ -36,6 +39,15 @@ type LinkedEntry = {
   status: string;
   title: string;
 };
+function opportunityClosedResponse() {
+  return Response.json(
+    {
+      error:
+        "A oportunidade foi encerrada enquanto a agenda era atualizada. Nenhuma alteração foi salva.",
+    },
+    { status: 409 },
+  );
+}
 async function loadOpportunity(id: string, organizationId: string) {
   return env.DB.prepare(
     `SELECT opportunity.id,opportunity.artist_id AS artistId,artist.name AS artistName,opportunity.customer_id AS customerId,customer.name AS customerName,opportunity.assigned_user_id AS assignedUserId,opportunity.originator_user_id AS originatorUserId,opportunity.commercial_validator_user_id AS commercialValidatorUserId,assignee.name AS assigneeName,opportunity.event_date AS eventDate,opportunity.stage,opportunity.commercial_approval_status AS commercialApprovalStatus,opportunity.financial_approval_status AS financialApprovalStatus FROM opportunities opportunity JOIN artists artist ON artist.id=opportunity.artist_id AND artist.organization_id=opportunity.organization_id JOIN customers customer ON customer.id=opportunity.customer_id AND customer.organization_id=opportunity.organization_id LEFT JOIN users assignee ON assignee.id=opportunity.assigned_user_id WHERE opportunity.id=? AND opportunity.organization_id=?`,
@@ -134,8 +146,13 @@ export async function GET(
     .first();
   return Response.json({
     interval,
-    linkedEntry: linked || null,
-    conflicts,
+    linkedEntry: linked && context.membership.role === 'BOOKING_AGENT'
+      ? { id: linked.id, startDatetime: linked.startDatetime, endDatetime: linked.endDatetime }
+      : linked || null,
+    canCancelOption: linked?.status === 'OPTION',
+    conflicts: context.membership.role === 'BOOKING_AGENT'
+      ? conflicts.map((entry) => ({ startDatetime: entry.startDatetime, endDatetime: entry.endDatetime }))
+      : conflicts,
     availability: blocking
       ? "BLOCKED"
       : conflicts.length
@@ -195,14 +212,27 @@ export async function POST(
       { error: "Ação de agenda inválida." },
       { status: 400 },
     );
+  if (!canMutateOpportunityCalendar(opportunity.stage))
+    return Response.json(
+      {
+        error:
+          "A agenda de uma oportunidade encerrada não pode ser alterada. Use o fluxo do show para mudanças posteriores ao fechamento.",
+      },
+      { status: 409 },
+    );
   const existing = await linkedEntry(id, context.organizationId);
   if (
     body.action === "CONFIRM" &&
-    !["OWNER", "MANAGER"].includes(context.membership.role)
+    !canConfirmOpportunityDate(
+      context.membership.role,
+      context.user.id,
+      opportunity.commercialValidatorUserId,
+    )
   )
     return Response.json(
       {
-        error: "A confirmação exige aprovação e permissão comercial superior.",
+        error:
+          "Somente a gestão ou o responsável comercial deste artista pode confirmar a data.",
       },
       { status: 403 },
     );
@@ -252,23 +282,29 @@ export async function POST(
         },
         { status: 409 },
       );
-    await env.DB.batch([
-      env.DB.prepare(
-        `DELETE FROM calendar_entries WHERE id=? AND organization_id=?`,
-      ).bind(existing.id, context.organizationId),
-      env.DB.prepare(
-        `UPDATE opportunities SET stage=CASE WHEN stage='DATE_OPTION' THEN 'NEGOTIATION' ELSE stage END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
-      ).bind(id, context.organizationId),
-      env.DB.prepare(
-        `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,from_value,created_by) VALUES (?,?,?,'CALENDAR_OPTION_CANCELLED','Opção de data cancelada.',?,?)`,
-      ).bind(
-        crypto.randomUUID(),
-        context.organizationId,
-        id,
-        existing.startDatetime,
-        context.user.id,
-      ),
-    ]);
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          `DELETE FROM calendar_entries WHERE id=? AND organization_id=?`,
+        ).bind(existing.id, context.organizationId),
+        env.DB.prepare(
+          `UPDATE opportunities SET stage=CASE WHEN stage='DATE_OPTION' THEN 'NEGOTIATION' ELSE stage END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
+        ).bind(id, context.organizationId),
+        env.DB.prepare(
+          `INSERT INTO opportunity_activities (id,organization_id,opportunity_id,type,description,from_value,created_by) VALUES (?,?,?,'CALENDAR_OPTION_CANCELLED','Opção de data cancelada.',?,?)`,
+        ).bind(
+          crypto.randomUUID(),
+          context.organizationId,
+          id,
+          existing.startDatetime,
+          context.user.id,
+        ),
+      ]);
+    } catch (error) {
+      if (String(error).includes("OPPORTUNITY_CLOSED"))
+        return opportunityClosedResponse();
+      throw error;
+    }
     return Response.json({ ok: true });
   }
   if (existing?.status === "CONFIRMED")
@@ -305,7 +341,7 @@ export async function POST(
             existing?.id,
           )
         : null;
-  if (conflict) return conflictResponse(conflict);
+  if (conflict) return conflictResponse(conflict, context.membership.role);
   const entryId = existing?.id || crypto.randomUUID(),
     title = `${nextStatus === "INQUIRY" ? "Consulta" : nextStatus === "OPTION" ? "Opção" : "Show confirmado"} · ${opportunity.artistName} · ${opportunity.customerName}`,
     statements = [];
@@ -364,7 +400,7 @@ export async function POST(
     env.DB.prepare(
       `UPDATE opportunities SET event_date=?,stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=?`,
     ).bind(
-      interval.startDatetime.slice(0, 10),
+      operationalDate(interval.startDatetime),
       nextStage,
       id,
       context.organizationId,
@@ -411,6 +447,8 @@ export async function POST(
   try {
     await env.DB.batch(statements);
   } catch (error) {
+    if (String(error).includes("OPPORTUNITY_CLOSED"))
+      return opportunityClosedResponse();
     if (String(error).includes("CALENDAR_CONFLICT")) {
       const latest = await findBlockingConflict(
         context.organizationId,
@@ -419,12 +457,12 @@ export async function POST(
         interval.endDatetime,
         existing?.id,
       );
-      if (latest) return conflictResponse(latest);
+      if (latest) return conflictResponse(latest, context.membership.role);
     }
     throw error;
   }
   return Response.json({
     ok: true,
-    entry: { id: entryId, status: nextStatus, ...interval },
+    entry: { id: entryId, ...(context.membership.role === 'BOOKING_AGENT' ? {} : { status: nextStatus }), ...interval },
   });
 }

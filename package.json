@@ -13,8 +13,16 @@
     "test": "node --test tests/*.test.mjs && tsx --test tests/*.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:remote": "wrangler d1 migrations apply bookstage-staging --remote",
-    "deploy:cloudflare": "npm run build && wrangler deploy"
+    "db:migrate:staging": "wrangler d1 migrations apply DB --env staging --remote",
+    "db:migrate:production": "wrangler d1 migrations apply DB --env production --remote",
+    "migrations:check": "node scripts/check-migrations.mjs",
+    "staging:data:export": "node scripts/data-transfer.mjs export-local",
+    "staging:data:import": "node scripts/data-transfer.mjs import-staging",
+    "staging:data:import:confirmed": "node scripts/data-transfer.mjs import-staging --confirm-staging-replace",
+    "staging:data:validate": "node scripts/data-transfer.mjs validate-staging",
+    "deploy:config": "node scripts/prepare-deploy-configs.mjs",
+    "deploy:staging": "npm run build && npm run deploy:config && wrangler deploy --config dist/deploy/wrangler.staging.json",
+    "deploy:production": "npm run build && npm run deploy:config && wrangler deploy --config dist/deploy/wrangler.production.json"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

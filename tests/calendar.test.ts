@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  bookingVisibleCalendarTitle,
   calendarStatuses,
   canManageCalendar,
   canViewCalendarInternalNotes,
@@ -11,6 +12,21 @@ import {
   isBlockingStatus,
   normalizeCalendarInput,
 } from "../app/lib/calendar-rules";
+
+test("remove estado interno embutido no título exibido ao Booking", () => {
+  assert.equal(
+    bookingVisibleCalendarTitle("Opção · Artista · Contratante"),
+    "Artista · Contratante",
+  );
+  assert.equal(
+    bookingVisibleCalendarTitle("Show confirmado · Artista · Contratante"),
+    "Artista · Contratante",
+  );
+  assert.equal(
+    bookingVisibleCalendarTitle("Festival de verão"),
+    "Festival de verão",
+  );
+});
 
 test("cria dados válidos para cada status da agenda", () => {
   for (const status of calendarStatuses) {

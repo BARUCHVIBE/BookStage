@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { fetchJson } from "@/app/lib/http-client";
 import {
   ContractTemplatesPanel,
   type ContractTemplate,
@@ -114,7 +115,10 @@ const bytes = (value: number | null) =>
       : `${(value / 1024 / 1024).toFixed(1)} MB`
     : "";
 
-export function ContractsModule() {
+export function ContractsModule({ role }: { role: string }) {
+  const bookingModelsOnly = role === "BOOKING_AGENT",
+    canCreate = ["OWNER", "MANAGER", "SALES"].includes(role),
+    canOpenTemplates = role !== "FINANCE";
   const [items, setItems] = useState<ContractItem[]>([]),
     [opportunities, setOpportunities] = useState<Opportunity[]>([]),
     [templates, setTemplates] = useState<ContractTemplate[]>([]),
@@ -122,7 +126,7 @@ export function ContractsModule() {
   const [q, setQ] = useState(""),
     [status, setStatus] = useState(""),
     [creating, setCreating] = useState(false),
-    [managingTemplates, setManagingTemplates] = useState(false),
+    [managingTemplates, setManagingTemplates] = useState(bookingModelsOnly),
     [opportunityId, setOpportunityId] = useState(""),
     [templateId, setTemplateId] = useState(""),
     [notes, setNotes] = useState(""),
@@ -133,29 +137,29 @@ export function ContractsModule() {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (status) params.set("status", status);
-    const response = await fetch(`/api/contracts?${params}`),
-      data = (await response.json()) as {
+    const result = await fetchJson<{
         contracts?: ContractItem[];
         opportunities?: Opportunity[];
         error?: string;
-      };
-    if (response.ok) {
+      }>(`/api/contracts?${params}`);
+    if (result.ok) {
+      const data = result.data || {};
       setItems(data.contracts || []);
       setOpportunities(data.opportunities || []);
       setMessage("");
-    } else setMessage(data.error || "Não foi possível carregar os contratos.");
+    } else setMessage(result.error || "Não foi possível carregar os contratos.");
   }, [q, status]);
   useEffect(() => {
+    if (bookingModelsOnly) return;
     const timer = setTimeout(load, 180);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [bookingModelsOnly, load]);
   const loadTemplates = useCallback(async () => {
-    const response = await fetch("/api/contract-templates"),
-      data = (await response.json()) as {
+    const result = await fetchJson<{
         templates?: ContractTemplate[];
-      };
-    if (response.ok) {
-      const next = data.templates || [];
+      }>("/api/contract-templates");
+    if (result.ok) {
+      const next = result.data?.templates || [];
       setTemplates(next);
       setTemplateId(
         (current) =>
@@ -167,12 +171,12 @@ export function ContractsModule() {
     }
   }, []);
   useEffect(() => {
+    if (!canOpenTemplates) return;
     const timer = setTimeout(() => void loadTemplates(), 0);
     return () => clearTimeout(timer);
-  }, [loadTemplates]);
+  }, [canOpenTemplates, loadTemplates]);
   async function open(id: string) {
-    const response = await fetch(`/api/contracts/${id}`),
-      data = (await response.json()) as {
+    const result = await fetchJson<{
         contract?: ContractDetail;
         activities?: Activity[];
         fieldDefinitions?: FieldDefinition[];
@@ -181,10 +185,12 @@ export function ContractsModule() {
         canGenerate?: boolean;
         canManageStatus?: boolean;
         error?: string;
-      };
-    if (response.ok && data.contract) {
+      }>(`/api/contracts/${id}`);
+    if (result.ok && result.data?.contract) {
+      const data = result.data;
+      const contract = data.contract!;
       setDetail({
-        contract: data.contract,
+        contract,
         activities: data.activities || [],
         fieldDefinitions: data.fieldDefinitions || [],
         renderedDocument: data.renderedDocument || null,
@@ -192,45 +198,43 @@ export function ContractsModule() {
         canGenerate: Boolean(data.canGenerate),
         canManageStatus: Boolean(data.canManageStatus),
       });
-      setNotes(data.contract.notes || "");
-      setFieldValues(data.contract.fieldValues || {});
+      setNotes(contract.notes || "");
+      setFieldValues(contract.fieldValues || {});
       setCreating(false);
       setMessage("");
-    } else setMessage(data.error || "Contrato não encontrado.");
+    } else setMessage(result.error || "Contrato não encontrado.");
   }
   async function create(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
-    const response = await fetch("/api/contracts", {
+    const result = await fetchJson<{ id?: string; error?: string }>("/api/contracts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ opportunityId, templateId, notes }),
-      }),
-      data = (await response.json()) as { id?: string; error?: string };
+      });
     setBusy(false);
-    if (!response.ok || !data.id) {
-      setMessage(data.error || "Não foi possível criar o contrato.");
+    if (!result.ok || !result.data?.id) {
+      setMessage(result.error || "Não foi possível criar o contrato.");
       return;
     }
     setCreating(false);
     setOpportunityId("");
     setNotes("");
     await load();
-    await open(data.id);
+    await open(result.data.id);
   }
   async function generatePdf() {
     if (!detail) return;
     setBusy(true);
-    const response = await fetch(
+    const result = await fetchJson<{ error?: string }>(
         `/api/contracts/${detail.contract.id}/generate`,
         {
           method: "POST",
         },
-      ),
-      data = (await response.json()) as { error?: string };
+      );
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível gerar o PDF.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível gerar o PDF.");
       return;
     }
     setMessage("PDF gerado a partir do modelo protegido.");
@@ -241,15 +245,14 @@ export function ContractsModule() {
     if (!detail) return;
     setBusy(true);
     setMessage("");
-    const response = await fetch(`/api/contracts/${detail.contract.id}`, {
+    const result = await fetchJson<{ error?: string }>(`/api/contracts/${detail.contract.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível atualizar o contrato.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível atualizar o contrato.");
       return;
     }
     await load();
@@ -269,15 +272,14 @@ export function ContractsModule() {
     setMessage("");
     const form = new FormData();
     form.set("file", file);
-    const response = await fetch(`/api/contracts/${detail.contract.id}/file`, {
+    const result = await fetchJson<{ error?: string }>(`/api/contracts/${detail.contract.id}/file`, {
         method: "POST",
         body: form,
-      }),
-      data = (await response.json()) as { error?: string };
+      });
     setBusy(false);
     event.target.value = "";
-    if (!response.ok) {
-      setMessage(data.error || "Não foi possível enviar o arquivo.");
+    if (!result.ok) {
+      setMessage(result.error || "Não foi possível enviar o arquivo.");
       return;
     }
     setMessage(
@@ -310,7 +312,9 @@ export function ContractsModule() {
   if (managingTemplates)
     return (
       <ContractTemplatesPanel
-        back={() => setManagingTemplates(false)}
+        back={
+          bookingModelsOnly ? undefined : () => setManagingTemplates(false)
+        }
         onChanged={loadTemplates}
       />
     );
@@ -325,25 +329,34 @@ export function ContractsModule() {
           </p>
         </div>
         <div className="contract-heading-actions">
-          <button
-            className="button button-secondary"
-            onClick={() => setManagingTemplates(true)}
-          >
-            <FileText />
-            Modelos
-          </button>
-          <button
-            className="button button-primary"
-            onClick={() => {
-              setCreating(true);
-              setMessage("");
-            }}
-          >
-            <Plus />
-            Criar contrato
-          </button>
+          {canOpenTemplates && (
+            <button
+              className="button button-secondary"
+              onClick={() => setManagingTemplates(true)}
+            >
+              <FileText />
+              Modelos
+            </button>
+          )}
+          {canCreate && (
+            <button
+              className="button button-primary"
+              onClick={() => {
+                setCreating(true);
+                setMessage("");
+              }}
+            >
+              <Plus />
+              Criar contrato
+            </button>
+          )}
         </div>
       </div>
+      {role === "FINANCE" && (
+        <div className="notice">
+          Acesso financeiro de consulta: visualize e baixe os contratos da empresa.
+        </div>
+      )}
       {message && <div className="calendar-alert">{message}</div>}
       {creating && (
         <form className="contract-create-card" onSubmit={create}>
@@ -739,8 +752,9 @@ function ContractView({
                   onClick={() => patch({ status: "SENT" })}
                 >
                   <Send />
-                  Marcar como enviado
+                  Registrar envio externo
                 </button>
+                <small>Use após enviar o documento ao contratante por outro canal.</small>
                 {!contract.fileName && (
                   <small>Envie o PDF antes de avançar.</small>
                 )}

@@ -7,6 +7,10 @@ import {
   renderContractTemplate,
 } from "@/app/lib/contract-template-rules";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
+import {
+  generateContractFromPdfTemplate,
+  type ContractTemplateType,
+} from "@/app/lib/contract-pdf";
 
 function safePdfText(value: string) {
   const normalized = value
@@ -75,12 +79,15 @@ export async function POST(
       { status: 403 },
     );
   const contract = await env.DB.prepare(
-    `SELECT contract.contract_number AS contractNumber,contract.template_body_snapshot AS templateBody,contract.field_values AS fieldValues,contract.file_key AS previousFileKey,contract.updated_at AS sourceUpdatedAt,organization.name AS organizationName,organization.document AS organizationDocument,customer.name AS customerName,customer.company_name AS companyName,customer.document AS customerDocument,artist.name AS artistName FROM contracts contract JOIN organizations organization ON organization.id=contract.organization_id JOIN customers customer ON customer.id=contract.customer_id AND customer.organization_id=contract.organization_id JOIN artists artist ON artist.id=contract.artist_id AND artist.organization_id=contract.organization_id WHERE contract.id=? AND contract.organization_id=? AND contract.status='DRAFT'`,
+    `SELECT contract.contract_number AS contractNumber,contract.template_body_snapshot AS templateBody,contract.template_type AS templateType,contract.template_file_key_snapshot AS templateFileKey,contract.template_mapping_snapshot AS templateMapping,contract.field_values AS fieldValues,contract.file_key AS previousFileKey,contract.updated_at AS sourceUpdatedAt,organization.name AS organizationName,organization.document AS organizationDocument,customer.name AS customerName,customer.company_name AS companyName,customer.document AS customerDocument,artist.name AS artistName FROM contracts contract JOIN organizations organization ON organization.id=contract.organization_id JOIN customers customer ON customer.id=contract.customer_id AND customer.organization_id=contract.organization_id JOIN artists artist ON artist.id=contract.artist_id AND artist.organization_id=contract.organization_id WHERE contract.id=? AND contract.organization_id=? AND contract.status='DRAFT'`,
   )
     .bind(id, context.organizationId)
     .first<{
       contractNumber: string;
       templateBody: string | null;
+      templateType: "TEXT" | "PDF_ACROFORM" | "PDF_STATIC";
+      templateFileKey: string | null;
+      templateMapping: string;
       fieldValues: string;
       previousFileKey: string | null;
       sourceUpdatedAt: string;
@@ -91,7 +98,11 @@ export async function POST(
       customerDocument: string | null;
       artistName: string;
     }>();
-  if (!contract?.templateBody)
+  if (
+    !contract ||
+    (contract.templateType === "TEXT" && !contract.templateBody) ||
+    (contract.templateType !== "TEXT" && !contract.templateFileKey)
+  )
     return Response.json(
       { error: "Este contrato não possui um modelo aplicado." },
       { status: 409 },
@@ -102,7 +113,7 @@ export async function POST(
   } catch {
     storedFields = {};
   }
-  const text = renderContractTemplate(contract.templateBody, {
+  const values = {
       ...normalizeContractFieldValues(storedFields),
       contract_number: contract.contractNumber,
       organization_name: contract.organizationName,
@@ -111,29 +122,39 @@ export async function POST(
       customer_company: contract.companyName || "",
       customer_document: contract.customerDocument || "",
       artist_name: contract.artistName,
-    }),
-    pdf = await PDFDocument.create(),
-    font = await pdf.embedFont(StandardFonts.Helvetica),
-    bold = await pdf.embedFont(StandardFonts.HelveticaBold),
-    lines = wrap(safePdfText(text));
-  let page = pdf.addPage([595.28, 841.89]),
-    y = 785;
-  for (const line of lines) {
-    if (y < 60) {
-      page = pdf.addPage([595.28, 841.89]);
-      y = 785;
-    }
-    const heading = /^\d+\.|^CONTRATO/.test(line);
-    page.drawText(line, {
-      x: 52,
-      y,
-      size: heading ? 11 : 9.5,
-      font: heading ? bold : font,
-      color: rgb(0.08, 0.1, 0.15),
-    });
-    y -= line ? (heading ? 18 : 14) : 10;
-  }
-  const bytes = await pdf.save(),
+    },
+    bytes =
+      contract.templateType === "TEXT"
+        ? await (async () => {
+            const text = renderContractTemplate(contract.templateBody!, values),
+              pdf = await PDFDocument.create(),
+              font = await pdf.embedFont(StandardFonts.Helvetica),
+              bold = await pdf.embedFont(StandardFonts.HelveticaBold),
+              lines = wrap(safePdfText(text));
+            let page = pdf.addPage([595.28, 841.89]),
+              y = 785;
+            for (const line of lines) {
+              if (y < 60) {
+                page = pdf.addPage([595.28, 841.89]);
+                y = 785;
+              }
+              const heading = /^\d+\.|^CONTRATO/.test(line);
+              page.drawText(line, { x: 52, y, size: heading ? 11 : 9.5, font: heading ? bold : font, color: rgb(0.08, 0.1, 0.15) });
+              y -= line ? (heading ? 18 : 14) : 10;
+            }
+            return pdf.save();
+          })()
+        : await (async () => {
+            const source = await env.FILES.get(contract.templateFileKey!);
+            if (!source) throw new Error("Arquivo original do modelo não encontrado.");
+            const mapping = JSON.parse(contract.templateMapping || "{}") as Record<string, string>;
+            return generateContractFromPdfTemplate(
+              new Uint8Array(await source.arrayBuffer()),
+              contract.templateType as ContractTemplateType,
+              mapping,
+              values,
+            );
+          })(),
     fileName = `${contract.contractNumber}.pdf`,
     key = `contracts/${context.organizationId}/${id}/${crypto.randomUUID()}.pdf`;
   await env.FILES.put(key, bytes, {
@@ -141,12 +162,13 @@ export async function POST(
     customMetadata: { organizationId: context.organizationId, contractId: id },
   });
   const updated = await env.DB.prepare(
-    `UPDATE contracts SET file_key=?,file_name=?,file_type='application/pdf',file_size=?,file_uploaded_at=CURRENT_TIMESTAMP,generated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=? AND status='DRAFT' AND updated_at=? AND field_values=?`,
+    `UPDATE contracts SET file_key=?,file_name=?,file_type='application/pdf',file_size=?,file_uploaded_at=CURRENT_TIMESTAMP,generated_at=CURRENT_TIMESTAMP,generated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND organization_id=? AND status='DRAFT' AND updated_at=? AND field_values=?`,
   )
     .bind(
       key,
       fileName,
       bytes.length,
+      context.user.id,
       id,
       context.organizationId,
       contract.sourceUpdatedAt,

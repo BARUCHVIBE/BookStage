@@ -8,10 +8,11 @@ import {
 } from "@/app/lib/tenant";
 import { rejectCrossOriginMutation } from "@/app/lib/request-security";
 import { normalizeOrganizationInput } from "@/app/lib/organization-rules";
+import { brandingAssetBelongsToOrganization } from "@/app/lib/branding-assets";
 
 async function membership(userId: string, organizationId: string) {
   return await env.DB.prepare(
-    `SELECT user_id AS userId, organization_id AS organizationId, role, status FROM memberships WHERE user_id=? AND organization_id=?`,
+    `SELECT membership.user_id AS userId,membership.organization_id AS organizationId,membership.role,membership.status FROM memberships membership JOIN organizations organization ON organization.id=membership.organization_id WHERE membership.user_id=? AND membership.organization_id=? AND organization.status='ACTIVE'`,
   )
     .bind(userId, organizationId)
     .first<{
@@ -82,6 +83,24 @@ export async function PATCH(
       { status: 400 },
     );
   }
+  const current = await env.DB.prepare(
+    `SELECT logo FROM organizations WHERE id=?`,
+  )
+    .bind(id)
+    .first<{ logo: string | null }>();
+  if (
+    !(await brandingAssetBelongsToOrganization(
+      env.FILES,
+      input.logo,
+      id,
+      "logo",
+      current?.logo,
+    ))
+  )
+    return Response.json(
+      { error: "O logo não pertence a esta organização." },
+      { status: 400 },
+    );
   await env.DB.prepare(
     `UPDATE organizations SET name=?,logo=?,email=?,phone=?,document=?,website=?,instagram=?,description=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
   )

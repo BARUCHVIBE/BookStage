@@ -89,6 +89,22 @@ test("consultas do dashboard permanecem escopadas à organização e ao SALES", 
   assert.match(route, /Comercial não encontrado/);
 });
 
+test("dashboard não reexpõe status internos da agenda ao Booking", async () => {
+  const route = await readFile(
+    new URL("../app/api/dashboard/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    route,
+    /role === "BOOKING_AGENT" \? \[\] : options\.results/,
+  );
+  assert.match(
+    route,
+    /role === "BOOKING_AGENT" \? \[\] : blocks\.results/,
+  );
+  assert.match(route, /role === "BOOKING_AGENT"[\s\S]*\[\][\s\S]*optionAttention\.results/);
+});
+
 test("indicadores usam apenas dados calculáveis existentes", async () => {
   const route = await readFile(
     new URL("../app/api/dashboard/route.ts", import.meta.url),
